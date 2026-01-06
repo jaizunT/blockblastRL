@@ -14,7 +14,7 @@ python -m pip install pynput pyautogui
 
 Calibrate
 conda activate blockblast
-python blockblast_rl.py calibrate
+  python blockblast_calibration.py calibrate
 
 You will be prompted to click:
 1) Top-left of the 8x8 grid
@@ -26,12 +26,12 @@ You will be prompted to click:
 Shape Class Calibration
 - Edit the class list in `blockblast_rl.py` (CLASSES) to match your needs.
 - Calibrate one class at a time (includes tray pickup/scale for that tray):
-  python blockblast_rl.py calibrate-class <class_name> <tray_index 1-3>
+  python blockblast_calibration.py calibrate-class <class_name> <tray_index 1-3>
 - See which classes still need calibration:
-  python blockblast_rl.py status
+  python blockblast_calibration.py status
 - Reset calibration data:
-  python blockblast_rl.py reset calibration
-  python blockblast_rl.py reset pair --class 3x3 --tray 1
+  python blockblast_calibration.py reset calibration
+  python blockblast_calibration.py reset pair --class 3x3 --tray 1
 
 Calibration Summary
 - Calibration is two layers:
@@ -43,10 +43,10 @@ Calibration Summary
 
 Place a Piece
 conda activate blockblast
-python blockblast_rl.py place <tray_index 1-3> <row 1-8> <col 1-8> [--class <class_name>]
+python blockblast_calibration.py place <tray_index 1-3> <row 1-8> <col 1-8> [--class <class_name>]
 
 Example
-python blockblast_rl.py place 1 3 4
+python blockblast_calibration.py place 1 3 4
 
 Notes
 - The script uses drag-and-drop from the tray center to the target cell center.
