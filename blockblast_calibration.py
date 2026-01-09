@@ -332,7 +332,7 @@ def calibrate_class_offset(class_name, tray_index):
     )
     print(
         f"Now move it so it is centered on grid cell "
-        f"({targets[0] + 1},{targets[1] + 1}), then press Space."
+        f"({targets[0]},{targets[1]}), then press Space."
     )
     cx, cy = wait_for_keypress(
         "Press Space to capture the cursor position.",
@@ -452,8 +452,8 @@ def main():
 
     place_parser = sub.add_parser("place", help="Place a piece.")
     place_parser.add_argument("tray_index", type=int, choices=[1, 2, 3], help="Tray index 1-3.")
-    place_parser.add_argument("row", type=int, help="Row 1-8.")
-    place_parser.add_argument("col", type=int, help="Col 1-8.")
+    place_parser.add_argument("row", type=int, help="Row 0-7.")
+    place_parser.add_argument("col", type=int, help="Col 0-7.")
     place_parser.add_argument("--class", dest="class_name", type=str, help="Optional class name.")
     place_parser.add_argument("--debug", action="store_true", help="Print computed placement info.")
 
@@ -476,13 +476,13 @@ def main():
         calibrate_class_offset(args.class_name, args.tray_index - 1)
         return
     if args.cmd == "place":
-        if not (1 <= args.row <= 8 and 1 <= args.col <= 8):
-            print("row/col must be between 1 and 8.")
+        if not (0 <= args.row <= 7 and 0 <= args.col <= 7):
+            print("row/col must be between 0 and 7.")
             sys.exit(1)
         drag_piece(
             args.tray_index - 1,
-            args.row - 1,
-            args.col - 1,
+            args.row,
+            args.col,
             class_name=args.class_name,
             debug=args.debug,
         )

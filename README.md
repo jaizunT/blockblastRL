@@ -43,7 +43,7 @@ Calibration Summary
 
 Place a Piece
 conda activate blockblast
-python blockblast_calibration.py place <tray_index 1-3> <row 1-8> <col 1-8> [--class <class_name>]
+python blockblast_calibration.py place <tray_index 1-3> <row 0-7> <col 0-7> [--class <class_name>]
 
 Example
 python blockblast_calibration.py place 1 3 4
