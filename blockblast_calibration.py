@@ -125,28 +125,28 @@ def calibrate_tray_piece(tray_index, tl, br):
     targets = [(2, 6), (7, 1)]
     grid_tmp = {"grid": {"tl": {"x": tl[0], "y": tl[1]}, "br": {"x": br[0], "y": br[1]}}, "grid_size": 8}
     print(
-        f"Drag scale calibration for tray piece {tray_index + 1}: "
+        f"Drag scale calibration for tray piece {tray_index}: "
         "click and HOLD the piece, then press Space to capture the pickup cursor."
     )
     px, py = wait_for_keypress(
         "Press Space to capture the pickup cursor position.",
-        live_label=f"tray {tray_index + 1} pickup",
+        live_label=f"tray {tray_index} pickup",
     )
     print(
         f"Now move it so it is centered on grid cell "
-        f"({targets[0][0] + 1},{targets[0][1] + 1}), then press Space (keep holding the mouse)."
+        f"({targets[0][0]},{targets[0][1]}), then press Space (keep holding the mouse)."
     )
     cx1, cy1 = wait_for_keypress(
         "Press Space to capture the cursor position.",
-        live_label=f"tray {tray_index + 1} target 1",
+        live_label=f"tray {tray_index} target 1",
     )
     print(
         f"Now move the SAME piece so it is centered on grid cell "
-        f"({targets[1][0] + 1},{targets[1][1] + 1}), then press Space."
+        f"({targets[1][0]},{targets[1][1]}), then press Space."
     )
     cx2, cy2 = wait_for_keypress(
         "Press Space to capture the cursor position.",
-        live_label=f"tray {tray_index + 1} target 2",
+        live_label=f"tray {tray_index} target 2",
     )
     start = (px, py)
     t1 = cell_center(grid_tmp, targets[0][0], targets[0][1])
@@ -175,7 +175,7 @@ def calibrate():
 
     tray = []
     for i in range(3):
-        tray.append(wait_for_click(f"Click the CENTER of tray piece {i + 1}.", f"tray {i + 1} center"))
+        tray.append(wait_for_click(f"Click the CENTER of tray piece {i}.", f"tray {i} center"))
 
     focus = wait_for_click("Click a SAFE spot inside the iPhone Mirroring window to focus it.", "focus")
 
@@ -255,7 +255,7 @@ def drag_piece(tray_index, row, col, duration=0.15, class_name=None, debug=False
     offset = None
     if class_name:
         offsets_by_tray = cal.get("class_offsets_by_tray", {})
-        tray_key = str(tray_index + 1)
+        tray_key = str(tray_index)
         if tray_key in offsets_by_tray and class_name in offsets_by_tray[tray_key]:
             offset = offsets_by_tray[tray_key][class_name]
         else:
@@ -274,7 +274,7 @@ def drag_piece(tray_index, row, col, duration=0.15, class_name=None, debug=False
 
     if debug:
         print("Debug placement:")
-        print(f"- tray_index: {tray_index + 1}")
+        print(f"- tray_index: {tray_index}")
         print(f"- class: {class_name}")
         print(f"- pickup: ({start_x:.2f}, {start_y:.2f})")
         print(f"- target cell center: ({base_dest[0]:.2f}, {base_dest[1]:.2f})")
@@ -316,7 +316,7 @@ def calibrate_class_offset(class_name, tray_index):
     cal["drag_transform"] = transforms
     cal["drag_scale_targets"] = [{"row": r, "col": c} for r, c in [(2, 6), (7, 1)]]
     CALIBRATION_PATH.write_text(json.dumps(cal, indent=2))
-    print(f"Updated tray {tray_index + 1} calibration in {CALIBRATION_PATH}")
+    print(f"Updated tray {tray_index} calibration in {CALIBRATION_PATH}")
 
     targets = (3, 3)
     t = cell_center({"grid": {"tl": {"x": tl[0], "y": tl[1]}, "br": {"x": br[0], "y": br[1]}}, "grid_size": 8}, *targets)
@@ -327,7 +327,7 @@ def calibrate_class_offset(class_name, tray_index):
     by = transform.get("by", 1.0) or 1.0
 
     print(
-        f"Class offset calibration for '{class_name}' (tray {tray_index + 1}): "
+        f"Class offset calibration for '{class_name}' (tray {tray_index}): "
         "keep holding the same piece, then move it to the target cell."
     )
     print(
@@ -343,7 +343,7 @@ def calibrate_class_offset(class_name, tray_index):
     achieved_y = ay + by * cy
     offset = {"x": t[0] - achieved_x, "y": t[1] - achieved_y}
     offsets_by_tray = cal.get("class_offsets_by_tray", {})
-    tray_key = str(tray_index + 1)
+    tray_key = str(tray_index)
     if tray_key not in offsets_by_tray:
         offsets_by_tray[tray_key] = {}
     offsets_by_tray[tray_key][class_name] = offset
@@ -384,11 +384,11 @@ def status():
     if offsets_by_tray:
         print("Class calibration status (by tray):")
         for i in range(3):
-            tray_key = str(i + 1)
+            tray_key = str(i)
             tray_classes = offsets_by_tray.get(tray_key, {})
             missing_tray = [c for c in CLASSES if c not in tray_classes]
             print(
-                f"- Tray {i + 1}: {len(CLASSES) - len(missing_tray)}/{len(CLASSES)} calibrated"
+                f"- Tray {i}: {len(CLASSES) - len(missing_tray)}/{len(CLASSES)} calibrated"
             )
             if tray_classes:
                 print("  Calibrated:")
@@ -416,7 +416,7 @@ def reset_calibration(scope, class_name=None, tray_index=None):
             print("Missing class name or tray index for reset pair.")
             return
         offsets_by_tray = cal.get("class_offsets_by_tray", {})
-        tray_key = str(tray_index + 1)
+        tray_key = str(tray_index)
         if tray_key in offsets_by_tray and class_name in offsets_by_tray[tray_key]:
             del offsets_by_tray[tray_key][class_name]
             cal["class_offsets_by_tray"] = offsets_by_tray
@@ -434,7 +434,7 @@ def reset_calibration(scope, class_name=None, tray_index=None):
         cal["drag_transform"] = transforms
         CALIBRATION_PATH.write_text(json.dumps(cal, indent=2))
         print(
-            f"Cleared class '{class_name}' and tray {tray_index + 1} in {CALIBRATION_PATH}"
+            f"Cleared class '{class_name}' and tray {tray_index} in {CALIBRATION_PATH}"
         )
         return
     print("Unknown reset scope. Use: calibration, pair.")
@@ -448,10 +448,10 @@ def main():
 
     class_parser = sub.add_parser("calibrate-class", help="Calibrate class offset.")
     class_parser.add_argument("class_name", type=str, help="Class name from CLASSES.")
-    class_parser.add_argument("tray_index", type=int, choices=[1, 2, 3], help="Tray index 1-3.")
+    class_parser.add_argument("tray_index", type=int, choices=[0, 1, 2], help="Tray index 0-2.")
 
     place_parser = sub.add_parser("place", help="Place a piece.")
-    place_parser.add_argument("tray_index", type=int, choices=[1, 2, 3], help="Tray index 1-3.")
+    place_parser.add_argument("tray_index", type=int, choices=[0, 1, 2], help="Tray index 0-2.")
     place_parser.add_argument("row", type=int, help="Row 0-7.")
     place_parser.add_argument("col", type=int, help="Col 0-7.")
     place_parser.add_argument("--class", dest="class_name", type=str, help="Optional class name.")
@@ -465,7 +465,7 @@ def main():
         help="What to reset.",
     )
     reset_parser.add_argument("--class", dest="class_name", type=str, help="Class name to reset.")
-    reset_parser.add_argument("--tray", dest="tray_index", type=int, choices=[1, 2, 3], help="Tray index to reset.")
+    reset_parser.add_argument("--tray", dest="tray_index", type=int, choices=[0, 1, 2], help="Tray index to reset.")
 
     args = parser.parse_args()
 
@@ -473,14 +473,14 @@ def main():
         calibrate()
         return
     if args.cmd == "calibrate-class":
-        calibrate_class_offset(args.class_name, args.tray_index - 1)
+        calibrate_class_offset(args.class_name, args.tray_index)
         return
     if args.cmd == "place":
         if not (0 <= args.row <= 7 and 0 <= args.col <= 7):
             print("row/col must be between 0 and 7.")
             sys.exit(1)
         drag_piece(
-            args.tray_index - 1,
+            args.tray_index,
             args.row,
             args.col,
             class_name=args.class_name,
@@ -491,7 +491,7 @@ def main():
         status()
         return
     if args.cmd == "reset":
-        tray_index = args.tray_index - 1 if args.tray_index else None
+        tray_index = args.tray_index if args.tray_index is not None else None
         reset_calibration(args.scope, class_name=args.class_name, tray_index=tray_index)
         return
 

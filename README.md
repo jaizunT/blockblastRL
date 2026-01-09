@@ -19,19 +19,19 @@ conda activate blockblast
 You will be prompted to click:
 1) Top-left of the 8x8 grid
 2) Bottom-right of the 8x8 grid
-3) Center of tray pieces 1, 2, 3
+3) Center of tray pieces 0, 1, 2
 4) A safe focus point inside the iPhone Mirroring window
 5) For each tray piece: click and hold, press Space to capture pickup cursor, then drag to (3,7) and press Space, then to (8,2) and press Space
 
 Shape Class Calibration
 - Edit the class list in `blockblast_rl.py` (CLASSES) to match your needs.
 - Calibrate one class at a time (includes tray pickup/scale for that tray):
-  python blockblast_calibration.py calibrate-class <class_name> <tray_index 1-3>
+  python blockblast_calibration.py calibrate-class <class_name> <tray_index 0-2>
 - See which classes still need calibration:
   python blockblast_calibration.py status
 - Reset calibration data:
   python blockblast_calibration.py reset calibration
-  python blockblast_calibration.py reset pair --class 3x3 --tray 1
+  python blockblast_calibration.py reset pair --class 3x3 --tray 0
 
 Calibration Summary
 - Calibration is two layers:
@@ -43,10 +43,10 @@ Calibration Summary
 
 Place a Piece
 conda activate blockblast
-python blockblast_calibration.py place <tray_index 1-3> <row 0-7> <col 0-7> [--class <class_name>]
+python blockblast_calibration.py place <tray_index 0-2> <row 0-7> <col 0-7> [--class <class_name>]
 
 Example
-python blockblast_calibration.py place 1 3 4
+python blockblast_calibration.py place 0 3 4
 
 Status Processing (blockblast_status.py)
 - Shared scaling: coordinates from calibration.json (pyautogui-space) are scaled to the mss capture size.
