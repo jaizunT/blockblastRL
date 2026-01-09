@@ -48,6 +48,23 @@ python blockblast_calibration.py place <tray_index 1-3> <row 0-7> <col 0-7> [--c
 Example
 python blockblast_calibration.py place 1 3 4
 
+Status Processing (blockblast_status.py)
+- Shared scaling: coordinates from calibration.json (pyautogui-space) are scaled to the mss capture size.
+- Tray classification:
+  - Capture each tray box from `tray_boxes` with mss.
+  - Convert to grayscale and threshold vs background to get a mask.
+  - Compute the bounding box of foreground pixels.
+  - Sample each cell center inside that box to build a binary block grid (1 = filled).
+- Combo detection:
+  - Sample `background_pixel` and `combo_pixel`.
+  - If the background is stable and the combo pixel differs from background, combo is active.
+- Score OCR:
+  - Capture `score_box` with mss.
+  - Convert to PIL and run pytesseract with `--psm 7` + digit whitelist.
+- Board state:
+  - Use `board_box` to compute 8x8 cell centers.
+  - Compare center pixel vs a lower pixel in the same cell to mark occupancy.
+
 Notes
 - The script uses drag-and-drop from the tray center to the target cell center.
 - Failsafe: move the cursor to a screen corner to abort (pyautogui default).

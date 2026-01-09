@@ -139,8 +139,7 @@ def sample_tray(tray_tl, tray_br):
     img = Image.frombytes("RGB", (shot.width, shot.height), shot.rgb).convert("L")
 
     # Reduce size for faster processing
-    img_small = img.resize((width//4, height//4))
-    img_array = np.array(img_small)
+    img_array = np.array(img)
 
     # Get max and min for bounding box
     bg_pixel = img_array[0,0]
@@ -205,9 +204,8 @@ bg_pixel = CALIBRATION["background_pixel"]
 # Check pixel value at combo area
 combo_pixel = CALIBRATION["combo_pixel"]
 
-def update_bg_pixel():
-    r, g, b = sample_pixel(bg_pixel['x'], bg_pixel['y'])
-    bg_pixel['value'] = (r, g, b)
+def get_bg_pixel():
+    return sample_pixel(bg_pixel['x'], bg_pixel['y'])
 def background_stable():
     sampled_pixel = sample_pixel(bg_pixel['x'], bg_pixel['y'])
     time.sleep(0.02)
