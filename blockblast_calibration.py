@@ -3,6 +3,7 @@ import argparse
 import json
 import sys
 import time
+import threading
 from pathlib import Path
 
 CALIBRATION_PATH = Path(__file__).with_name("calibration.json")
@@ -51,9 +52,41 @@ def require_deps():
         sys.exit(1)
 
 
-def wait_for_click(prompt):
+def _start_live_cursor(label):
+    stop_event = threading.Event()
+    pos = {"x": 0, "y": 0}
+
+    def on_move(x, y):
+        pos["x"] = x
+        pos["y"] = y
+
+    listener = mouse.Listener(on_move=on_move)
+    listener.start()
+
+    def printer():
+        while not stop_event.is_set():
+            sys.stdout.write(
+                f"\r[{label}] cursor=({pos['x']:.0f}, {pos['y']:.0f})"
+            )
+            sys.stdout.flush()
+            time.sleep(0.05)
+        sys.stdout.write("\r" + " " * 80 + "\r")
+        sys.stdout.flush()
+
+    thread = threading.Thread(target=printer, daemon=True)
+    thread.start()
+
+    def stop():
+        stop_event.set()
+        listener.stop()
+
+    return stop
+
+
+def wait_for_click(prompt, live_label=None):
     print(prompt)
     pos = {}
+    stop_live = _start_live_cursor(live_label) if live_label else None
 
     def on_click(x, y, button, pressed):
         if pressed:
@@ -64,13 +97,16 @@ def wait_for_click(prompt):
     with mouse.Listener(on_click=on_click) as listener:
         listener.join()
 
+    if stop_live:
+        stop_live()
     return pos["x"], pos["y"]
 
 
-def wait_for_keypress(prompt, key=None):
+def wait_for_keypress(prompt, key=None, live_label=None):
     print(prompt)
     if key is None:
         key = keyboard.Key.space
+    stop_live = _start_live_cursor(live_label) if live_label else None
 
     def on_press(k):
         if k == key or getattr(k, "char", None) == " ":
@@ -80,6 +116,8 @@ def wait_for_keypress(prompt, key=None):
         listener.join()
 
     pos = pyautogui.position()
+    if stop_live:
+        stop_live()
     return pos.x, pos.y
 
 
@@ -90,17 +128,26 @@ def calibrate_tray_piece(tray_index, tl, br):
         f"Drag scale calibration for tray piece {tray_index + 1}: "
         "click and HOLD the piece, then press Space to capture the pickup cursor."
     )
-    px, py = wait_for_keypress("Press Space to capture the pickup cursor position.")
+    px, py = wait_for_keypress(
+        "Press Space to capture the pickup cursor position.",
+        live_label=f"tray {tray_index + 1} pickup",
+    )
     print(
         f"Now move it so it is centered on grid cell "
         f"({targets[0][0] + 1},{targets[0][1] + 1}), then press Space (keep holding the mouse)."
     )
-    cx1, cy1 = wait_for_keypress("Press Space to capture the cursor position.")
+    cx1, cy1 = wait_for_keypress(
+        "Press Space to capture the cursor position.",
+        live_label=f"tray {tray_index + 1} target 1",
+    )
     print(
         f"Now move the SAME piece so it is centered on grid cell "
         f"({targets[1][0] + 1},{targets[1][1] + 1}), then press Space."
     )
-    cx2, cy2 = wait_for_keypress("Press Space to capture the cursor position.")
+    cx2, cy2 = wait_for_keypress(
+        "Press Space to capture the cursor position.",
+        live_label=f"tray {tray_index + 1} target 2",
+    )
     start = (px, py)
     t1 = cell_center(grid_tmp, targets[0][0], targets[0][1])
     t2 = cell_center(grid_tmp, targets[1][0], targets[1][1])
@@ -123,14 +170,14 @@ def calibrate():
     print("Calibration starting in 2 seconds. Focus the iPhone Mirroring window.")
     time.sleep(2)
 
-    tl = wait_for_click("Click the TOP-LEFT corner of the 8x8 grid.")
-    br = wait_for_click("Click the BOTTOM-RIGHT corner of the 8x8 grid.")
+    tl = wait_for_click("Click the TOP-LEFT corner of the 8x8 grid.", "grid tl")
+    br = wait_for_click("Click the BOTTOM-RIGHT corner of the 8x8 grid.", "grid br")
 
     tray = []
     for i in range(3):
-        tray.append(wait_for_click(f"Click the CENTER of tray piece {i + 1}."))
+        tray.append(wait_for_click(f"Click the CENTER of tray piece {i + 1}.", f"tray {i + 1} center"))
 
-    focus = wait_for_click("Click a SAFE spot inside the iPhone Mirroring window to focus it.")
+    focus = wait_for_click("Click a SAFE spot inside the iPhone Mirroring window to focus it.", "focus")
 
     drag_transform = []
     pickups = []
@@ -287,7 +334,10 @@ def calibrate_class_offset(class_name, tray_index):
         f"Now move it so it is centered on grid cell "
         f"({targets[0] + 1},{targets[1] + 1}), then press Space."
     )
-    cx, cy = wait_for_keypress("Press Space to capture the cursor position.")
+    cx, cy = wait_for_keypress(
+        "Press Space to capture the cursor position.",
+        live_label=f"class {class_name} target",
+    )
     px, py = pickup["x"], pickup["y"]
     achieved_x = ax + bx * cx
     achieved_y = ay + by * cy
