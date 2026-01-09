@@ -134,16 +134,69 @@ def sample_tray(tray_tl, tray_br):
     width = right - left
     height = bottom - top
     shot = sct.grab({"left": left, "top": top, "width": width, "height": height})
+
     # Convert to gray scale for easier processing
     img = Image.frombytes("RGB", (shot.width, shot.height), shot.rgb).convert("L")
-    img_array = np.array(img)
-    
 
-    # Get max dimensions
+    # Reduce size for faster processing
+    img_small = img.resize((width//4, height//4))
+    img_array = np.array(img_small)
+
+    # Get max and min for bounding box
+    bg_pixel = img_array[0,0]
+    bg = int(bg_pixel)
+    mask = np.abs(img_array.astype(np.int16) - bg) > 10
+
+    cols_with_fg = np.where(mask.any(axis=0))[0]
+    rows_with_fg = np.where(mask.any(axis=1))[0]
+
+    x0, x1 = cols_with_fg[0], cols_with_fg[-1]
+    y0, y1 = rows_with_fg[0], rows_with_fg[-1] 
+    cropped = img_array[y0:y1+1, x0:x1+1]
 
     # Classify blocks into rectangular classes
+    h, w = cropped.shape
+    CELL_LENGTH = 16
 
-    # Classify blocks into template classes
+    block_h = int(np.round(h / CELL_LENGTH))
+    block_w = int(np.round(w / CELL_LENGTH))
+
+    block = [[0 for i in range(block_w)] for j in range(block_h)]
+
+    # Fill in block shape using pixel at center of each cell using thresholding
+    for i in range(block_h):
+        for j in range(block_w):
+            if np.abs(cropped[i*CELL_LENGTH + CELL_LENGTH//2, j*CELL_LENGTH + CELL_LENGTH//2] - bg) > 10:
+                block[i][j] = 1
+    
+    return block
+
+def classify_tray(tray_index):
+    if tray_index == 0:
+        tray_tl, tray_br = tray0_tl, tray0_br
+    elif tray_index == 1:
+        tray_tl, tray_br = tray1_tl, tray1_br
+    elif tray_index == 2:
+        tray_tl, tray_br = tray2_tl, tray2_br
+    else:
+        raise ValueError("Invalid tray index")
+    
+    block = sample_tray(tray_tl, tray_br)
+    return block
+
+def classify_all_trays():
+    blocks = []
+    for tray_index in range(3):
+        block = classify_tray(tray_index)
+        blocks.append(block)
+    return blocks
+
+def print_block(block):
+    for row in block:
+        print("".join(['#' if cell else '.' for cell in row]))
+    print()
+
+
 
 # ---------- Combo status ----------
 
@@ -152,6 +205,9 @@ bg_pixel = CALIBRATION["background_pixel"]
 # Check pixel value at combo area
 combo_pixel = CALIBRATION["combo_pixel"]
 
+def update_bg_pixel():
+    r, g, b = sample_pixel(bg_pixel['x'], bg_pixel['y'])
+    bg_pixel['value'] = (r, g, b)
 def background_stable():
     sampled_pixel = sample_pixel(bg_pixel['x'], bg_pixel['y'])
     time.sleep(0.02)

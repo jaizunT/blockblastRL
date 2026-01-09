@@ -2,9 +2,10 @@ from PIL import Image
 import mss
 import pytesseract
 import pyautogui
-from pynput import mouse
+from pynput import mouse, keyboard
 import sys
 import time
+import numpy as np
 
 sct = mss.mss()
 scale_x = 1.0
@@ -33,11 +34,22 @@ def on_click(x, y, button, pressed):
     if pressed and button == mouse.Button.left:
         ls.append((pos["x"], pos["y"]))
 
+def on_press(key):
+    try:
+        if key.char == 'q':
+            print("\nExiting...")
+            listener.stop()
+            listener2.stop()
+            sys.exit(0)
+    except AttributeError:
+        if key == keyboard.Key.space:
+            ls.append((pos["x"], pos["y"]))
+
 def screenshot():
     x1, y1 = ls.pop()
     x2, y2 = ls.pop()
 
-    left = min(x1, x2)
+    left = min(x1, x2)  
     top = min(y1, y2)
     right = max(x1, x2)
     bottom = max(y1, y2)
@@ -54,6 +66,8 @@ def screenshot():
     text = text.strip()
     print()
     print(f"OCR Result: {text}")
+
+
 def screenshot_img():
     x1, y1 = ls.pop()
     x2, y2 = ls.pop()
@@ -75,13 +89,57 @@ def screenshot_img():
     print()
     print(f"Saved screenshot.png")
 
+
+def screenshot_bounding_box():
+    x1, y1 = ls.pop()
+    x2, y2 = ls.pop()
+
+    left = min(x1, x2)
+    top = min(y1, y2)
+    right = max(x1, x2)
+    bottom = max(y1, y2)
+    # Adjust for scaling
+    left, top = int(left*scale_x), int(top*scale_y)
+    bottom, right = int(bottom*scale_x), int(right*scale_y)
+
+    width = right - left
+    height = bottom - top
+    shot = sct.grab({"left": left, "top": top, "width": width, "height": height})
+    # Convert to gray scale for easier processing
+    img = Image.frombytes("RGB", (shot.width, shot.height), shot.rgb).convert("L")
+
+    # Reduce size for faster processing
+    img_array = np.array(img)
+
+    # Get max and min for bounding box
+    bg_pixel = img_array[0,0]
+    bg = int(bg_pixel)
+    mask = np.abs(img_array.astype(np.int16) - bg) > 10
+
+    cols_with_fg = np.where(mask.any(axis=0))[0]
+    rows_with_fg = np.where(mask.any(axis=1))[0]
+
+    x0, x1 = cols_with_fg[0], cols_with_fg[-1]
+    y0, y1 = rows_with_fg[0], rows_with_fg[-1] 
+    cropped = img_array[y0:y1+1, x0:x1+1]
+
+    # Classify blocks into rectangular classes
+    img_crop = Image.fromarray(cropped.astype("uint8"), mode="L")
+    img_crop.save("cropped.png")
+    h, w = cropped.shape
+    print()
+    print(f"Cropped shape: {h}x{w}")
+
 listener = mouse.Listener(on_move=on_move, on_click=on_click)
+listener2 = keyboard.Listener(on_press=on_press)
 listener.start()
+listener2.start()
 
 while True:
     if len(ls) >= 2:
         # screenshot()
-        screenshot_img()
+        # screenshot_img()
+        screenshot_bounding_box()
     line = f"Cursor: ({pos['x']:.0f}, {pos['y']:.0f})"
     sys.stdout.write("\r" + line.ljust(40))
     sys.stdout.flush()
