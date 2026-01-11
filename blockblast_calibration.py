@@ -8,6 +8,7 @@ from pathlib import Path
 
 CALIBRATION_PATH = Path(__file__).with_name("calibration.json")
 CLASSES = [
+    "1x1",
     "1x2",
     "2x1",
     "2x2",
@@ -36,6 +37,10 @@ try:
     import pyautogui
 except ImportError:
     pyautogui = None
+try:
+    import numpy as np
+except ImportError:
+    np = None
 
 
 def require_deps():
@@ -196,7 +201,6 @@ def calibrate():
         "pickups": pickups,
         "drag_transform": drag_transform,
         "drag_scale_targets": [{"row": r, "col": c} for r, c in [(2, 6), (7, 1)]],
-        "class_offsets": {},
     }
 
     CALIBRATION_PATH.write_text(json.dumps(data, indent=2))
@@ -219,6 +223,163 @@ def cell_center(cal, row, col):
     cx = tl["x"] + (col + 0.5) * cell_w
     cy = tl["y"] + (row + 0.5) * cell_h
     return cx, cy
+
+
+TRAY_MAP_TARGETS = [
+    (0, 0),
+    (0, 7),
+    (7, 0),
+    (7, 7),
+    (0, 3),
+    (3, 0),
+    (7, 3),
+    (3, 7),
+    (3, 3),
+]
+
+
+def _cursor_for_target(cal, tray_index, class_name, row, col):
+    transforms = cal.get("drag_transform", [])
+    if tray_index >= len(transforms):
+        return None
+    transform = transforms[tray_index]
+    ax = transform.get("ax", 0.0)
+    bx = transform.get("bx", 1.0) or 1.0
+    ay = transform.get("ay", 0.0)
+    by = transform.get("by", 1.0) or 1.0
+
+    offsets_by_tray = cal.get("class_offsets_by_tray", {})
+    inferred_by_tray = cal.get("class_offsets_by_tray_inferred", {})
+    tray_key = str(tray_index)
+    offset = offsets_by_tray.get(tray_key, {}).get(class_name)
+    if offset is None:
+        offset = inferred_by_tray.get(tray_key, {}).get(class_name)
+    if offset is None:
+        return None
+
+    tx, ty = cell_center(cal, row, col)
+    tx -= offset.get("x", 0.0)
+    ty -= offset.get("y", 0.0)
+    cx = (tx - ax) / bx
+    cy = (ty - ay) / by
+    return cx, cy
+
+
+def _fit_affine(points_src, points_dst):
+    if np is None:
+        return None
+    a = np.array([[x, y, 1.0] for x, y in points_src], dtype=float)
+    b = np.array(points_dst, dtype=float)
+    coeffs, _, _, _ = np.linalg.lstsq(a, b, rcond=None)
+    return coeffs
+
+
+def _apply_affine(coeffs, x, y):
+    if coeffs is None:
+        return None
+    vec = np.array([x, y, 1.0], dtype=float)
+    out = vec @ coeffs
+    return float(out[0]), float(out[1])
+
+
+def _build_tray_mapping(cal, tray_a, tray_b):
+    offsets_by_tray = cal.get("class_offsets_by_tray", {})
+    inferred_by_tray = cal.get("class_offsets_by_tray_inferred", {})
+    shared = set(offsets_by_tray.get(str(tray_a), {})) & set(
+        offsets_by_tray.get(str(tray_b), {})
+    )
+    if not shared:
+        shared = set(inferred_by_tray.get(str(tray_a), {})) & set(
+            inferred_by_tray.get(str(tray_b), {})
+        )
+    if not shared:
+        return None
+
+    points_a = []
+    points_b = []
+    for class_name in sorted(shared):
+        for row, col in TRAY_MAP_TARGETS:
+            ca = _cursor_for_target(cal, tray_a, class_name, row, col)
+            cb = _cursor_for_target(cal, tray_b, class_name, row, col)
+            if ca is None or cb is None:
+                continue
+            points_a.append(ca)
+            points_b.append(cb)
+
+    if len(points_a) < 3:
+        return None
+    return _fit_affine(points_a, points_b)
+
+
+def _infer_offset_from_other_tray(cal, tray_index, class_name):
+    offsets_by_tray = cal.get("class_offsets_by_tray", {})
+    inferred_by_tray = cal.get("class_offsets_by_tray_inferred", {})
+    candidates = [
+        int(k) for k, v in offsets_by_tray.items() if class_name in v
+    ]
+    if not candidates:
+        candidates = [
+            int(k) for k, v in inferred_by_tray.items() if class_name in v
+        ]
+    for source_tray in candidates:
+        if source_tray == tray_index:
+            continue
+        mapping = _build_tray_mapping(cal, source_tray, tray_index)
+        if mapping is None:
+            continue
+        source_cursor = _cursor_for_target(
+            cal, source_tray, class_name, *TRAY_MAP_TARGETS[-1]
+        )
+        if source_cursor is None:
+            continue
+        dest_cursor = _apply_affine(mapping, *source_cursor)
+        if dest_cursor is None:
+            continue
+        transforms = cal.get("drag_transform", [])
+        if tray_index >= len(transforms):
+            continue
+        transform = transforms[tray_index]
+        ax = transform.get("ax", 0.0)
+        bx = transform.get("bx", 1.0) or 1.0
+        ay = transform.get("ay", 0.0)
+        by = transform.get("by", 1.0) or 1.0
+        tx, ty = cell_center(cal, *TRAY_MAP_TARGETS[-1])
+        achieved_x = ax + bx * dest_cursor[0]
+        achieved_y = ay + by * dest_cursor[1]
+        return {
+            "x": tx - achieved_x,
+            "y": ty - achieved_y,
+            "inferred_from": source_tray,
+        }
+    return None
+
+
+def infer_missing_offsets(cal, classes=None, trays=None):
+    if np is None:
+        print("numpy is required for inference. Install with: python -m pip install numpy")
+        return cal, 0
+    classes = classes or CLASSES
+    trays = trays if trays is not None else [0, 1, 2]
+    offsets_by_tray = cal.get("class_offsets_by_tray", {})
+    inferred_by_tray = cal.get("class_offsets_by_tray_inferred", {})
+    updated = 0
+    for tray_index in trays:
+        tray_key = str(tray_index)
+        if tray_key not in offsets_by_tray:
+            offsets_by_tray[tray_key] = {}
+        if tray_key not in inferred_by_tray:
+            inferred_by_tray[tray_key] = {}
+        for class_name in classes:
+            if class_name in offsets_by_tray[tray_key] or class_name in inferred_by_tray[tray_key]:
+                continue
+            inferred = _infer_offset_from_other_tray(cal, tray_index, class_name)
+            if inferred is None:
+                continue
+            inferred_by_tray[tray_key][class_name] = inferred
+            updated += 1
+    cal["class_offsets_by_tray"] = offsets_by_tray
+    cal["class_offsets_by_tray_inferred"] = inferred_by_tray
+    return cal, updated
 
 
 def drag_piece(tray_index, row, col, duration=0.15, class_name=None, debug=False):
@@ -257,13 +418,14 @@ def drag_piece(tray_index, row, col, duration=0.15, class_name=None, debug=False
     offset = None
     if class_name:
         offsets_by_tray = cal.get("class_offsets_by_tray", {})
+        inferred_by_tray = cal.get("class_offsets_by_tray_inferred", {})
         tray_key = str(tray_index)
         if tray_key in offsets_by_tray and class_name in offsets_by_tray[tray_key]:
             offset = offsets_by_tray[tray_key][class_name]
+        elif tray_key in inferred_by_tray and class_name in inferred_by_tray[tray_key]:
+            offset = inferred_by_tray[tray_key][class_name]
         else:
-            class_offsets = cal.get("class_offsets", {})
-            if class_name in class_offsets:
-                offset = class_offsets[class_name]
+            offset = _infer_offset_from_other_tray(cal, tray_index, class_name)
     if offset:
         dest = (dest[0] - offset.get("x", 0), dest[1] - offset.get("y", 0))
     if transform:
@@ -357,9 +519,7 @@ def calibrate_class_offset(class_name, tray_index):
 def status():
     cal = load_calibration()
     offsets_by_tray = cal.get("class_offsets_by_tray", {})
-    class_offsets = cal.get("class_offsets", {})
-    missing = [c for c in CLASSES if c not in class_offsets]
-    calibrated = [c for c in CLASSES if c in class_offsets]
+    inferred_by_tray = cal.get("class_offsets_by_tray_inferred", {})
     pickups = cal.get("pickups", [])
     transforms = cal.get("drag_transform", [])
 
@@ -369,32 +529,32 @@ def status():
             transforms[idx].get(k, 0) for k in ("ax", "bx", "ay", "by")
         )
         return bool(has_pickup and has_transform)
-    if class_offsets:
-        print("Class calibration status (global fallback):")
-        print(f"- Total classes: {len(CLASSES)}")
-        print(f"- Calibrated: {len(CLASSES) - len(missing)}")
-        if calibrated:
-            print("- Calibrated list:")
-            for c in calibrated:
-                print(f"  - {c}")
-        if missing:
-            print("- Missing:")
-            for c in missing:
-                print(f"  - {c}")
-        else:
-            print("- All classes calibrated.")
-    else:
-        print("Class calibration status (global fallback):")
-        print(f"- Total classes: {len(CLASSES)}")
-        print("- Calibrated: 0")
-        print("- Missing:")
-        for c in CLASSES:
+    any_tray = set()
+    for tray_classes in offsets_by_tray.values():
+        any_tray.update(tray_classes.keys())
+    for tray_classes in inferred_by_tray.values():
+        any_tray.update(tray_classes.keys())
+    missing_any = [c for c in CLASSES if c not in any_tray]
+
+    print("Class calibration status (any tray):")
+    print(f"- Total classes: {len(CLASSES)}")
+    print(f"- Calibrated: {len(CLASSES) - len(missing_any)}")
+    if any_tray:
+        print("- Calibrated list:")
+        for c in sorted(any_tray):
             print(f"  - {c}")
+    if missing_any:
+        print("- Missing:")
+        for c in missing_any:
+            print(f"  - {c}")
+    else:
+        print("- All classes calibrated.")
 
     print("Class calibration status (by tray):")
     for i in range(3):
         tray_key = str(i)
         tray_classes = offsets_by_tray.get(tray_key, {})
+        inferred_classes = inferred_by_tray.get(tray_key, {})
         missing_tray = [c for c in CLASSES if c not in tray_classes]
         print(
             f"- Tray {i}: {len(CLASSES) - len(missing_tray)}/{len(CLASSES)} calibrated"
@@ -402,6 +562,10 @@ def status():
         if tray_classes:
             print("  Calibrated:")
             for c in sorted(tray_classes.keys()):
+                print(f"    - {c}")
+        if inferred_classes:
+            print("  Inferred:")
+            for c in sorted(inferred_classes.keys()):
                 print(f"    - {c}")
         if missing_tray:
             print("  Missing:")
@@ -412,8 +576,8 @@ def status():
 def reset_calibration(scope, class_name=None, tray_index=None):
     cal = load_calibration()
     if scope == "calibration":
-        cal["class_offsets"] = {}
         cal["class_offsets_by_tray"] = {}
+        cal["class_offsets_by_tray_inferred"] = {}
         cal["pickups"] = []
         cal["drag_scales"] = []
         cal["drag_transform"] = []
@@ -425,10 +589,14 @@ def reset_calibration(scope, class_name=None, tray_index=None):
             print("Missing class name or tray index for reset pair.")
             return
         offsets_by_tray = cal.get("class_offsets_by_tray", {})
+        inferred_by_tray = cal.get("class_offsets_by_tray_inferred", {})
         tray_key = str(tray_index)
         if tray_key in offsets_by_tray and class_name in offsets_by_tray[tray_key]:
             del offsets_by_tray[tray_key][class_name]
             cal["class_offsets_by_tray"] = offsets_by_tray
+        if tray_key in inferred_by_tray and class_name in inferred_by_tray[tray_key]:
+            del inferred_by_tray[tray_key][class_name]
+            cal["class_offsets_by_tray_inferred"] = inferred_by_tray
         pickups = cal.get("pickups", [])
         scales = cal.get("drag_scales", [])
         transforms = cal.get("drag_transform", [])
@@ -476,6 +644,8 @@ def main():
     reset_parser.add_argument("--class", dest="class_name", type=str, help="Class name to reset.")
     reset_parser.add_argument("--tray", dest="tray_index", type=int, choices=[0, 1, 2], help="Tray index to reset.")
 
+    sub.add_parser("infer", help="Infer missing class offsets from other trays.")
+
     args = parser.parse_args()
 
     if args.cmd == "calibrate":
@@ -502,6 +672,12 @@ def main():
     if args.cmd == "reset":
         tray_index = args.tray_index if args.tray_index is not None else None
         reset_calibration(args.scope, class_name=args.class_name, tray_index=tray_index)
+        return
+    if args.cmd == "infer":
+        cal = load_calibration()
+        cal, updated = infer_missing_offsets(cal)
+        CALIBRATION_PATH.write_text(json.dumps(cal, indent=2))
+        print(f"Inferred {updated} missing offset(s) into {CALIBRATION_PATH}")
         return
 
 

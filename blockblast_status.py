@@ -11,6 +11,7 @@ import numpy as np
 
 # Block classes you use for calibration.
 BLOCK_CLASSES = [
+    "1x1",
     "1x2",
     "2x1",
     "2x2",
@@ -296,4 +297,3 @@ def print_board(board):
 # print(f"Example templates for class '3x3': {BLOCK_LIBRARY['3x3']}")
 # for template in BLOCK_LIBRARY['3x3']:
 #     print_formatted_mask(template)
-

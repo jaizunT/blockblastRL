@@ -32,6 +32,8 @@ Shape Class Calibration
 - Reset calibration data:
   python blockblast_calibration.py reset calibration
   python blockblast_calibration.py reset pair --class 3x3 --tray 0
+- Infer missing tray/class offsets from other trays (stored separately):
+  python blockblast_calibration.py infer
 
 Calibration Summary
 - Calibration is two layers:
@@ -40,6 +42,8 @@ Calibration Summary
 - `calibrate-class` does both for a single (class, tray) in one flow.
 - `place` uses the tray transform + optional class offset (via `--class`).
   - Class offsets are stored per tray; calibrate the same class on each tray where it appears.
+  - If a class offset is missing for a tray but exists on another tray, the code infers it
+    using a tray-to-tray affine mapping from existing shared class calibrations.
 
 Place a Piece
 conda activate blockblast

@@ -122,12 +122,16 @@ def fit_tray_mapping(cal, tray_a, tray_b):
 
     points_a = []
     points_b = []
+    point_meta = []
     for class_name in sorted(shared):
         for row, col in targets:
             ca = cursor_for_target(cal, tray_a, class_name, row, col)
             cb = cursor_for_target(cal, tray_b, class_name, row, col)
+            if ca is None or cb is None:
+                continue
             points_a.append(ca)
             points_b.append(cb)
+            point_meta.append((class_name, row, col))
 
     feats_affine = [[x, y, 1.0] for x, y in points_a]
     feats_quad = [[x, y, x * x, y * y, x * y, 1.0] for x, y in points_a]
@@ -135,21 +139,88 @@ def fit_tray_mapping(cal, tray_a, tray_b):
     print(f"\nTray mapping {tray_a} -> {tray_b} using {len(shared)} shared class(es):")
     fit_and_report("Affine", feats_affine, points_b)
     fit_and_report("Quadratic", feats_quad, points_b)
+    if np is None or not points_a:
+        return
+    a = np.array(feats_affine, dtype=float)
+    b = np.array(points_b, dtype=float)
+    coeffs, _, _, _ = np.linalg.lstsq(a, b, rcond=None)
+    pred = a @ coeffs
+    err = pred - b
+    err_mag = np.sqrt(np.sum(err ** 2, axis=1))
+    worst = np.argsort(-err_mag)[:5]
+    print("Worst residuals (affine):")
+    for idx in worst:
+        class_name, row, col = point_meta[idx]
+        print(
+            f"- class {class_name} cell ({row},{col}): "
+            f"dx={err[idx][0]:.2f}, dy={err[idx][1]:.2f}, "
+            f"err={err_mag[idx]:.2f}px"
+        )
+
+
+def parse_class_dims(class_name):
+    try:
+        w, h = class_name.split("x")
+        return int(w), int(h)
+    except ValueError:
+        return None, None
+
+
+def fit_size_to_offset(cal, tray_index):
+    if np is None:
+        print("numpy is required for size fit. Install with: python -m pip install numpy")
+        return
+    offsets_by_tray = cal.get("class_offsets_by_tray", {})
+    tray_key = str(tray_index)
+    offsets = offsets_by_tray.get(tray_key, {})
+    if not offsets:
+        print(f"No class offsets for tray {tray_index}.")
+        return
+
+    feats = []
+    targets = []
+    for class_name, offset in offsets.items():
+        w, h = parse_class_dims(class_name)
+        if w is None:
+            continue
+        feats.append([w, h, 1.0])
+        targets.append([offset.get("x", 0.0), offset.get("y", 0.0)])
+
+    if len(feats) < 3:
+        print(f"Not enough data points for tray {tray_index} to fit width/height.")
+        return
+
+    a = np.array(feats, dtype=float)
+    b = np.array(targets, dtype=float)
+    coeffs, _, _, _ = np.linalg.lstsq(a, b, rcond=None)
+    pred = a @ coeffs
+    err = pred - b
+    rmse = np.sqrt(np.mean(err ** 2, axis=0))
+    total_rmse = np.sqrt(np.mean(err ** 2))
+    print(f"\nSize fit for tray {tray_index}: offset = a*w + b*h + c")
+    print(f"  rmse_x={rmse[0]:.3f} px, rmse_y={rmse[1]:.3f} px, rmse_total={total_rmse:.3f} px")
 
 
 def main():
     require_deps()
     cal = load_calibration()
 
-    mode = input("Mode: (1) fit tray drag, (2) fit tray-to-tray mapping [1/2]: ").strip() or "1"
+    mode = input("Mode: (1) fit tray drag, (2) fit tray-to-tray mapping, (3) fit size->offset [1/2/3]: ").strip() or "1"
     if mode == "2":
+        pairs = [(0, 1), (1, 2), (2, 0)]
+        for tray_a, tray_b in pairs:
+            fit_tray_mapping(cal, tray_a, tray_b)
+        return
+    if mode == "3":
         try:
-            tray_a = int(input("Source tray (0-2): ").strip())
-            tray_b = int(input("Target tray (0-2): ").strip())
+            tray_index = int(input("Tray index (0-2): ").strip())
         except ValueError:
             print("Invalid tray index.")
             sys.exit(1)
-        fit_tray_mapping(cal, tray_a, tray_b)
+        if tray_index not in (0, 1, 2):
+            print("Tray index must be 0, 1, or 2.")
+            sys.exit(1)
+        fit_size_to_offset(cal, tray_index)
         return
 
     try:
