@@ -99,6 +99,7 @@ def wait_for_click(prompt, live_label=None):
 
     if stop_live:
         stop_live()
+        print()
     return pos["x"], pos["y"]
 
 
@@ -118,6 +119,7 @@ def wait_for_keypress(prompt, key=None, live_label=None):
     pos = pyautogui.position()
     if stop_live:
         stop_live()
+        print()
     return pos.x, pos.y
 
 
@@ -381,23 +383,30 @@ def status():
                 print(f"  - {c}")
         else:
             print("- All classes calibrated.")
-    if offsets_by_tray:
-        print("Class calibration status (by tray):")
-        for i in range(3):
-            tray_key = str(i)
-            tray_classes = offsets_by_tray.get(tray_key, {})
-            missing_tray = [c for c in CLASSES if c not in tray_classes]
-            print(
-                f"- Tray {i}: {len(CLASSES) - len(missing_tray)}/{len(CLASSES)} calibrated"
-            )
-            if tray_classes:
-                print("  Calibrated:")
-                for c in sorted(tray_classes.keys()):
-                    print(f"    - {c}")
-            if missing_tray:
-                print("  Missing:")
-                for c in missing_tray:
-                    print(f"    - {c}")
+    else:
+        print("Class calibration status (global fallback):")
+        print(f"- Total classes: {len(CLASSES)}")
+        print("- Calibrated: 0")
+        print("- Missing:")
+        for c in CLASSES:
+            print(f"  - {c}")
+
+    print("Class calibration status (by tray):")
+    for i in range(3):
+        tray_key = str(i)
+        tray_classes = offsets_by_tray.get(tray_key, {})
+        missing_tray = [c for c in CLASSES if c not in tray_classes]
+        print(
+            f"- Tray {i}: {len(CLASSES) - len(missing_tray)}/{len(CLASSES)} calibrated"
+        )
+        if tray_classes:
+            print("  Calibrated:")
+            for c in sorted(tray_classes.keys()):
+                print(f"    - {c}")
+        if missing_tray:
+            print("  Missing:")
+            for c in missing_tray:
+                print(f"    - {c}")
 
 
 def reset_calibration(scope, class_name=None, tray_index=None):

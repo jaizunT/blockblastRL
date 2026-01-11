@@ -160,7 +160,7 @@ def sample_tray(tray_tl, tray_br):
     block_h = int(np.round(h / CELL_LENGTH))
     block_w = int(np.round(w / CELL_LENGTH))
 
-    block = [[0 for i in range(block_w)] for j in range(block_h)]
+    block = np.zeros((block_h, block_w), dtype=int)
 
     # Fill in block shape using pixel at center of each cell using thresholding
     for i in range(block_h):
