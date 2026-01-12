@@ -187,25 +187,23 @@ cell_w = (br_x - tl_x) // 8
 cell_h = (br_y - tl_y) // 8
 
 CELL_PIXEL_BUFFER = 10  # Pixels away from center to sample top/bottom
+difference_threshold = 10
 
 def get_board_state():
     board = np.zeros((8, 8), dtype=int)
+    shot = sct.grab({"left": tl_x, "top": tl_y, "width": br_x - tl_x, "height": br_y - tl_y})
+    
+    img = np.frombuffer(shot.rgb, dtype=np.uint8).reshape(shot.height, shot.width, 3)
+
     for row in range(8):
         for col in range(8):
-            # Get pixel x, y at center of cell
-            center_cell_x = tl_x + col * cell_w + cell_w // 2
-            center_cell_y = tl_y + row * cell_h + cell_h // 2
-            # center_pixel = sample_pixel(center_cell_x, center_cell_y)
+            cx = int(col * cell_w + cell_w // 2)
+            cy = int(row * cell_h + cell_h // 2)
+            top = img[cy + CELL_PIXEL_BUFFER, cx]
+            bot = img[cy - CELL_PIXEL_BUFFER, cx]
+            if np.any(np.abs(top.astype(int) - bot.astype(int)) > difference_threshold):
+                board[row, col] = 1
 
-            # Sample pixel at bottom of cell
-            bottom_pixel = sample_pixel(center_cell_x, center_cell_y - CELL_PIXEL_BUFFER)
-            # Sample pixel at top of cell
-            top_pixel = sample_pixel(center_cell_x, center_cell_y + CELL_PIXEL_BUFFER)  
-            # Determine if block is present based on pixel comparison
-            # If top of cell is different from bottom of cell, mark as occupied
-            dif = abs(np.array(top_pixel) - np.array(bottom_pixel))
-            if any(dif > 5):
-                board[row][col] = 1
     return board
 
 def print_board(board):
