@@ -31,6 +31,8 @@ def place_block(self, tray_index, grid_x, grid_y, block):
     
 
 def invalid_placement(grid_x, grid_y, block, board):
+    if block is None:
+        return True
     # Check if placing block at (grid_x, grid_y) would overlap existing blocks or go out of bounds
     for i in range(block.shape[0]):
         for j in range(block.shape[1]):

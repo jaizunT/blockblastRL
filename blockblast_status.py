@@ -129,7 +129,8 @@ def sample_tray(tray_tl, tray_br, snapshot=None):
     # Fill in block shape using pixel at center of each cell using thresholding
     for i in range(block_h):
         for j in range(block_w):
-            if np.abs(cropped[i*CELL_LENGTH + CELL_LENGTH//2, j*CELL_LENGTH + CELL_LENGTH//2] - bg) > 10:
+            sample = int(cropped[i * CELL_LENGTH + CELL_LENGTH // 2, j * CELL_LENGTH + CELL_LENGTH // 2])
+            if abs(sample - bg) > 10:
                 block[i][j] = 1
     
     return block

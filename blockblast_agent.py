@@ -13,6 +13,10 @@ random.seed(seed)
 np.random.seed(seed)
 torch.manual_seed(seed)
 
+BOARD_SIZE = 8
+TRAY_COUNT = 3
+TRAY_PAD_SIZE = 5
+
 class BlockBlastEnv:
     def __init__(self):
         self.refresh_data()
@@ -20,14 +24,22 @@ class BlockBlastEnv:
         self.lines_cleared_last_move = 0
         self.combo_count = 0
 
+    def _pad_tray(self, tray, size=TRAY_PAD_SIZE):
+        if tray is None:
+            return np.zeros((size, size), dtype=np.float32)
+        tray_arr = np.array(tray, dtype=np.float32)
+        h, w = tray_arr.shape
+        padded = np.zeros((size, size), dtype=np.float32)
+        padded[:h, :w] = tray_arr
+        return padded
+
     def _encode_state(self):
-        # self.refresh_data()
         board = np.array(self.board, dtype=np.float32)
-        tray_tensors = []
-        for tray in self.trays:
-            tray = np.array(tray, dtype=np.float32)
-            tray_tensors.append(tray)
-        return board, tray_tensors, self.moves_since_last_clear, self.lines_cleared_last_move, self.combo_count
+        tray_tensors = [self._pad_tray(tray) for tray in self.trays]
+        moves = float(self.moves_since_last_clear)
+        lines = float(self.lines_cleared_last_move)
+        combo = float(self.combo_count)
+        return board, tray_tensors, moves, lines, combo
 
     def reset(self):
         play.click_restart()
@@ -44,6 +56,13 @@ class BlockBlastEnv:
         prev_score = self.score
         prev_board = self.board.copy()
         prev_combo = self.in_combo
+        invalid_move = play.invalid_placement(x, y, block, self.board)
+
+        if invalid_move:
+            reward = -5.0
+            done = False
+            return self._encode_state(), reward, done, {}
+        
         self.lines_cleared_last_move = play.place_block(tray_index, x, y, block)
         # increase or reset 'moves since last clear' based on lines cleared
         self.moves_since_last_clear = 0 if self.lines_cleared_last_move > 0 else self.moves_since_last_clear + 1
@@ -87,15 +106,21 @@ class BlockBlastEnv:
 class PolicyNet(nn.Module):
     def __init__(self, action_dim):
         super().__init__()
+        input_dim = (BOARD_SIZE * BOARD_SIZE) + (TRAY_COUNT * TRAY_PAD_SIZE * TRAY_PAD_SIZE) + 3
         self.net = nn.Sequential(
-            nn.Flatten(),
-            nn.Linear(8 * 8, 128),
+            nn.Linear(input_dim, 128),
             nn.ReLU(),
             nn.Linear(128, action_dim),
         )
 
-    def forward(self, board_tensor):
-        return self.net(board_tensor)
+    def forward(self, board_tensor, tray_tensors, moves_since_last_clear, lines_cleared_last_move, combo_count):
+        board_flat = board_tensor.flatten(start_dim=1)
+        trays_flat = tray_tensors.flatten(start_dim=1)
+        scalars = torch.stack(
+            [moves_since_last_clear, lines_cleared_last_move, combo_count], dim=1
+        )
+        features = torch.cat([board_flat, trays_flat, scalars], dim=1)
+        return self.net(features)
 
 
 def sample_action(logits, mask=None):
@@ -116,11 +141,30 @@ def action_index_to_tuple(action_idx, grid_size=8, trays=3):
     y = rem // grid_size
     return tray, x, y
 
-def log_action_to_file(tray_tensors, board, action):
+# Logs data to moves.txt for analysis
+def log_action_to_file(tray_tensors, board, action, moves_since_last_clear, lines_cleared_last_move, combo_count):
     tray_index, x, y = action
-    block = tray_tensors[tray_index]
-    print(f"Action: Place tray {tray_index} block at ({x}, {y})")
-    status.print_block(block)
+    with open("moves.txt", "a") as f:
+        # Writes board state
+        f.write("Board:\n")
+        for row in board:
+            f.write("".join(['#' if cell else '.' for cell in row]) + "\n")
+        # Writes tray_tensor state
+        f.write("Trays:\n")
+        for i, tray in enumerate(tray_tensors):
+            f.write(f"Tray {i}:\n")
+            if tray is None:
+                f.write("(empty)\n")
+                continue
+            for row in tray:
+                f.write("".join(['#' if cell else '.' for cell in row]) + "\n")
+        # Writes scalar state
+        f.write(f"Moves since last clear: {moves_since_last_clear}\n")
+        f.write(f"Lines cleared last move: {lines_cleared_last_move}\n")
+        f.write(f"Combo count: {combo_count}\n")
+        # Writes action taken
+        f.write(f"Action: Tray {tray_index} at ({x}, {y})\n")
+        f.write("\n")
     
 
 def main():
@@ -132,9 +176,15 @@ def main():
     # Placeholder training loop structure.
     for _ in range(10):
         state = env.reset()
-        board, _ = state
+        board, trays, moves, lines, combo = state
         board_tensor = torch.tensor(board, dtype=torch.float32).unsqueeze(0)
-        logits = policy(board_tensor)
+        trays_tensor = torch.tensor(np.stack(trays), dtype=torch.float32).unsqueeze(0)
+        moves_tensor = torch.tensor([moves], dtype=torch.float32)
+        lines_tensor = torch.tensor([lines], dtype=torch.float32)
+        combo_tensor = torch.tensor([combo], dtype=torch.float32)
+        logits = policy(
+            board_tensor, trays_tensor, moves_tensor, lines_tensor, combo_tensor
+        )
         action_idx, logp = sample_action(logits)
         action = action_index_to_tuple(action_idx)
         (next_state, reward, done, _) = env.step(action)
