@@ -12,8 +12,11 @@ def place_block(self, tray_index, grid_x, grid_y, block):
     #     return False
     
     # previous_board = self.board
+
+    # Get lines cleared from action
+    lines_cleared = get_lines_cleared(self.board, grid_x, grid_y, block)
     calibration.drag_piece(tray_index, grid_x, grid_y, class_name=f"{block.shape[1]}x{block.shape[0]}")
-    
+    return lines_cleared
     # if not self.refresh_status():
     #     print("Loss detected after placement.")
     #     return False
@@ -24,6 +27,8 @@ def place_block(self, tray_index, grid_x, grid_y, block):
     
     # print(f"Placed block from tray {tray_index} at ({grid_x}, {grid_y}) successfully")
     # return True
+    # return lines cleared
+    
 
 def invalid_placement(grid_x, grid_y, block, board):
     # Check if placing block at (grid_x, grid_y) would overlap existing blocks or go out of bounds
@@ -100,6 +105,18 @@ def refresh_status():
     in_combo = status.is_in_combo()
     return board, score, in_combo
 
+# Get number of lines cleared since based on previous board state and current action
+def get_lines_cleared(board, grid_x, grid_y, block):
+    temp_board = board.copy()
+    block_h, block_w = block.shape
+    for i in range(block_h):
+        for j in range(block_w):
+            if block[i][j] == 1:
+                temp_board[grid_y + i][grid_x + j] = 1
+
+    rows_cleared = [r for r in range(8) if all(temp_board[r][c] != 0 for c in range(8))]
+    cols_cleared = [c for c in range(8) if all(temp_board[r][c] != 0 for r in range(8))]
+    return len(rows_cleared) + len(cols_cleared)
 
 # Checks internal board state with currently placed piece for loss condition if rest of pieces can't fit anywhere.
 def check_loss(board, block_index, grid_x, grid_y, blocks):
