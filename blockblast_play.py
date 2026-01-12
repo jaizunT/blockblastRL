@@ -2,6 +2,7 @@ import time
 import random
 import blockblast_status as status
 import blockblast_calibration as calibration
+import numpy as np
 
 # Defines methods for placing blocks in BlockBlast game.
     
@@ -87,8 +88,8 @@ def random_place():
         print(f"Placing tray {tray_index} block at ({grid_x}, {grid_y})")
         place_block(tray_index, grid_x, grid_y, block)
 
-def get_blocks():
-    return status.classify_all_trays()
+def get_blocks(snapshot=None):
+    return status.classify_all_trays(snapshot=snapshot)
 
 def refresh_status():
     while True:
@@ -101,17 +102,19 @@ def refresh_status():
 
 
 # Checks internal board state with currently placed piece for loss condition if rest of pieces can't fit anywhere.
-def check_loss(board, block, grid_x, grid_y, blocks):
+def check_loss(board, block_index, grid_x, grid_y, blocks):
     # Create a temporary board with the current block placed
-    temp_board = [row[:] for row in board]
-    block_h, block_w = block.shape
+    temp_board = board.copy()
+    block_h, block_w = blocks[block_index].shape
     for i in range(block_h):
         for j in range(block_w):
-            if block[i][j] == 1:
+            if blocks[block_index][i][j] == 1:
                 temp_board[grid_y + i][grid_x + j] = 1
 
     # Check if any of the remaining blocks can fit anywhere on the temp_board
-    for b in blocks:
+    for i, b in enumerate(blocks):
+        if i == block_index or b is None:
+            continue  # Skip the block that was just placed
         b_h, b_w = b.shape
         for y in range(8 - b_h + 1):
             for x in range(8 - b_w + 1):

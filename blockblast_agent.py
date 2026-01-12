@@ -5,17 +5,17 @@ import torch.nn as nn
 
 import blockblast_calibration as calibration
 import blockblast_status as status
+import blockblast_play as play
 
 # Scaffold for a BlockBlast RL agent using PyTorch.
 
 
 class BlockBlastEnv:
     def __init__(self):
-        self.board = status.get_board_state()
-        self.trays = status.classify_all_trays()
-        self.score = status.get_score()
+        self.refresh_data()
 
     def _encode_state(self):
+        # self.refresh_data()
         board = np.array(self.board, dtype=np.float32)
         tray_tensors = []
         for tray in self.trays:
@@ -24,24 +24,29 @@ class BlockBlastEnv:
         return board, tray_tensors
 
     def reset(self):
-        self.board = status.get_board_state()
-        self.trays = status.classify_all_trays()
-        self.score = status.get_score()
+        play.click_restart()
+        self.refresh_data()
         return self._encode_state()
 
     def step(self, action):
         tray_index, x, y = action
         block = self.trays[tray_index]
         prev_score = self.score
-        calibration.drag_piece(tray_index, x, y, class_name=f"{block.shape[1]}x{block.shape[0]}")
+        prev_board = self.board.copy()
+        play.place_block(tray_index, x, y, block)
         while not status.background_stable():
             pass
-        self.board = status.get_board_state()
-        self.trays = status.classify_all_trays()
-        self.score = status.get_score()
+        self.refresh_data()
         reward = self.score - prev_score
-        done = status.check_loss()
+        done = play.check_loss(prev_board, tray_index, x, y, self.trays)
         return self._encode_state(), reward, done, {}
+    
+    def refresh_data(self):
+        data = status.screenshot()
+        self.board = status.get_board_state(data)
+        self.trays = play.get_blocks(data)
+        self.score = status.get_score(data)
+
 
 
 class PolicyNet(nn.Module):

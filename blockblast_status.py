@@ -27,15 +27,49 @@ try:
 except Exception:
     pass
 
-def sample_pixel(x, y):
-    # Adjust for scaling
-    left = int(x * scale_x)
-    top = int(y * scale_y)
+_SNAPSHOT = None
 
-    shot = sct.grab({"left": left, "top": top, "width": 1, "height": 1})
-    pixel = shot.pixel(0, 0)
-    b, g, r = pixel
-    return r, g, b
+
+def screenshot():
+    """Capture the full screen once and cache it for reuse."""
+    global _SNAPSHOT
+    mon = sct.monitors[1]
+    shot = sct.grab(mon)
+    img = np.frombuffer(shot.rgb, dtype=np.uint8).reshape(
+        mon["height"], mon["width"], 3
+    )
+    _SNAPSHOT = {
+        "img": img,
+        "left": mon["left"],
+        "top": mon["top"],
+        "width": mon["width"],
+        "height": mon["height"],
+    }
+    return _SNAPSHOT
+
+
+def _get_snapshot():
+    return _SNAPSHOT if _SNAPSHOT is not None else screenshot()
+
+
+def _scaled_point(x, y):
+    return int(x * scale_x), int(y * scale_y)
+
+
+def sample_pixel(x, y, snapshot=None):
+    snapshot = _get_snapshot() if snapshot is None else snapshot
+    left, top = _scaled_point(x, y)
+    rel_x = left - snapshot["left"]
+    rel_y = top - snapshot["top"]
+    if (
+        rel_x < 0
+        or rel_y < 0
+        or rel_x >= snapshot["width"]
+        or rel_y >= snapshot["height"]
+    ):
+        return (0, 0, 0)
+    r, g, b = snapshot["img"][rel_y, rel_x]
+    return int(r), int(g), int(b)
 
 # ---------- Classification of blocks ----------
 
@@ -47,23 +81,27 @@ tray1_br = CALIBRATION["tray_boxes"]["1"]["br"]
 tray2_tl = CALIBRATION["tray_boxes"]["2"]["tl"]
 tray2_br = CALIBRATION["tray_boxes"]["2"]["br"]
 
-def sample_tray(tray_tl, tray_br):
+def sample_tray(tray_tl, tray_br, snapshot=None):
+    snapshot = _get_snapshot() if snapshot is None else snapshot
     left, top = tray_tl['x'], tray_tl['y']
-    bottom, right = tray_br['y'], tray_br['x']
+    right, bottom = tray_br['x'], tray_br['y']
 
     # Adjust for scaling
-    left, top = int(left*scale_x), int(top*scale_y)
-    bottom, right = int(bottom*scale_x), int(right*scale_y)
+    left, top = _scaled_point(left, top)
+    right, bottom = _scaled_point(right, bottom)
 
     width = right - left
     height = bottom - top
-    shot = sct.grab({"left": left, "top": top, "width": width, "height": height})
+    rel_x = left - snapshot["left"]
+    rel_y = top - snapshot["top"]
+    tray_img = snapshot["img"][rel_y:rel_y + height, rel_x:rel_x + width]
 
     # Convert to gray scale for easier processing
-    img = Image.frombytes("RGB", (shot.width, shot.height), shot.rgb).convert("L")
-
-    # Reduce size for faster processing
-    img_array = np.array(img)
+    img_array = (
+        0.299 * tray_img[..., 0]
+        + 0.587 * tray_img[..., 1]
+        + 0.114 * tray_img[..., 2]
+    ).astype(np.uint8)
 
     # Get max and min for bounding box
     bg_pixel = img_array[0,0]
@@ -72,6 +110,8 @@ def sample_tray(tray_tl, tray_br):
 
     cols_with_fg = np.where(mask.any(axis=0))[0]
     rows_with_fg = np.where(mask.any(axis=1))[0]
+    if len(cols_with_fg) == 0 or len(rows_with_fg) == 0:
+        return None
 
     x0, x1 = cols_with_fg[0], cols_with_fg[-1]
     y0, y1 = rows_with_fg[0], rows_with_fg[-1] 
@@ -94,7 +134,7 @@ def sample_tray(tray_tl, tray_br):
     
     return block
 
-def classify_tray(tray_index):
+def classify_tray(tray_index, snapshot=None):
     if tray_index == 0:
         tray_tl, tray_br = tray0_tl, tray0_br
     elif tray_index == 1:
@@ -104,13 +144,14 @@ def classify_tray(tray_index):
     else:
         raise ValueError("Invalid tray index")
     
-    block = sample_tray(tray_tl, tray_br)
+    block = sample_tray(tray_tl, tray_br, snapshot=snapshot)
     return block
 
-def classify_all_trays():
+def classify_all_trays(snapshot=None):
+    snapshot = _get_snapshot() if snapshot is None else snapshot
     blocks = []
     for tray_index in range(3):
-        block = classify_tray(tray_index)
+        block = classify_tray(tray_index, snapshot=snapshot)
         blocks.append(block)
     return blocks
 
@@ -131,14 +172,17 @@ combo_pixel = CALIBRATION["combo_pixel"]
 def get_bg_pixel():
     return sample_pixel(bg_pixel['x'], bg_pixel['y'])
 def background_stable():
-    sampled_pixel = sample_pixel(bg_pixel['x'], bg_pixel['y'])
+    snap1 = screenshot()
+    sampled_pixel = sample_pixel(bg_pixel['x'], bg_pixel['y'], snapshot=snap1)
     time.sleep(0.02)
     # If background pixel matches same value over multiple samples, it's stable
-    return sampled_pixel == sample_pixel(bg_pixel['x'], bg_pixel['y'])
+    snap2 = screenshot()
+    return sampled_pixel == sample_pixel(bg_pixel['x'], bg_pixel['y'], snapshot=snap2)
 
-def is_in_combo():
-    sampled_pixel = sample_pixel(combo_pixel['x'], combo_pixel['y'])
-    background_sampled = sample_pixel(bg_pixel['x'], bg_pixel['y'])
+def is_in_combo(snapshot=None):
+    snapshot = _get_snapshot() if snapshot is None else snapshot
+    sampled_pixel = sample_pixel(combo_pixel['x'], combo_pixel['y'], snapshot=snapshot)
+    background_sampled = sample_pixel(bg_pixel['x'], bg_pixel['y'], snapshot=snapshot)
     # If combo pixel differs from background pixel, we are in combo
     return sampled_pixel != background_sampled
 
@@ -149,18 +193,21 @@ score_tl = CALIBRATION["score_box"]["tl"]
 score_br = CALIBRATION["score_box"]["br"]
 
 # OCR to read score value
-def get_score():
+def get_score(snapshot=None):
+    snapshot = _get_snapshot() if snapshot is None else snapshot
     left, top = score_tl['x'],score_tl['y']
-    bottom, right = score_br['y'], score_br['x']
+    right, bottom = score_br['x'], score_br['y']
     # Adjust for scaling
-    left, top = int(left*scale_x), int(top*scale_y)
-    bottom, right = int(bottom*scale_x), int(right*scale_y)
+    left, top = _scaled_point(left, top)
+    right, bottom = _scaled_point(right, bottom)
 
     width = right - left
     height = bottom - top
-    shot = sct.grab({"left": left, "top": top, "width": width, "height": height})
+    rel_x = left - snapshot["left"]
+    rel_y = top - snapshot["top"]
+    score_img = snapshot["img"][rel_y:rel_y + height, rel_x:rel_x + width]
     # OCR processing
-    img = Image.frombytes("RGB", (shot.width, shot.height), shot.rgb)
+    img = Image.fromarray(score_img, mode="RGB")
     text = pytesseract.image_to_string(img, config='--psm 7 -c tessedit_char_whitelist=0123456789')
     text = text.strip()
     try:
@@ -189,12 +236,19 @@ cell_h = (br_y - tl_y) // 8
 CELL_PIXEL_BUFFER = 10  # Pixels away from center to sample top/bottom
 difference_threshold = 10
 
-def get_board_state():
+def get_board_state(snapshot=None):
+    snapshot = _get_snapshot() if snapshot is None else snapshot
     board = np.zeros((8, 8), dtype=int)
-    shot = sct.grab({"left": tl_x, "top": tl_y, "width": br_x - tl_x, "height": br_y - tl_y})
-    
-    img = np.frombuffer(shot.rgb, dtype=np.uint8).reshape(shot.height, shot.width, 3)
+    left, top = _scaled_point(tl_x, tl_y)
+    right, bottom = _scaled_point(br_x, br_y)
+    width = right - left
+    height = bottom - top
+    rel_x = left - snapshot["left"]
+    rel_y = top - snapshot["top"]
+    img = snapshot["img"][rel_y:rel_y + height, rel_x:rel_x + width]
 
+    cell_w = width // 8
+    cell_h = height // 8
     for row in range(8):
         for col in range(8):
             cx = int(col * cell_w + cell_w // 2)
