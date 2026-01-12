@@ -3,7 +3,6 @@ import mss
 import pytesseract
 import time
 import pyautogui
-from PIL import ImageGrab
 from PIL import Image
 import numpy as np
 
@@ -13,13 +12,21 @@ import numpy as np
 with open("calibration.json") as f:
     CALIBRATION = json.load(f)
 
-img = ImageGrab.grab(all_screens=True)
-screen_w, screen_h = pyautogui.size()
-scale_x = img.width / screen_w if screen_w else 1.0
-scale_y = img.height / screen_h if screen_h else 1.0
-
-# ---------- Initialize MSS ----------
+# Match pixel_locate scaling (mss monitor vs pyautogui coords).
 sct = mss.mss()
+scale_x = 1.0
+scale_y = 1.0
+try:
+    mon = sct.monitors[1]
+    screen_w = mon["width"]
+    screen_h = mon["height"]
+    mouse_w, mouse_h = pyautogui.size()
+    if mouse_w and mouse_h:
+        scale_x = screen_w / mouse_w
+        scale_y = screen_h / mouse_h
+except Exception:
+    pass
+
 def sample_pixel(x, y):
     # Adjust for scaling
     left = int(x * scale_x)
@@ -179,24 +186,26 @@ br_x, br_y = board_br['x'], board_br['y']
 cell_w = (br_x - tl_x) // 8
 cell_h = (br_y - tl_y) // 8
 
-BOTTOM_CELL_PIXEL_BUFFER = 5
+CELL_PIXEL_BUFFER = 10  # Pixels away from center to sample top/bottom
 
 def get_board_state():
-    board = [[False for _ in range(8)] for _ in range(8)]
+    board = np.zeros((8, 8), dtype=int)
     for row in range(8):
         for col in range(8):
-            # Sample pixel at center of cell
+            # Get pixel x, y at center of cell
             center_cell_x = tl_x + col * cell_w + cell_w // 2
             center_cell_y = tl_y + row * cell_h + cell_h // 2
-            center_pixel = sample_pixel(center_cell_x, center_cell_y)
+            # center_pixel = sample_pixel(center_cell_x, center_cell_y)
+
             # Sample pixel at bottom of cell
-            bottom_cell_x = tl_x + col * cell_w + cell_w // 2
-            bottom_cell_y = tl_y + (row + 1) * cell_h - BOTTOM_CELL_PIXEL_BUFFER
-            bottom_pixel = sample_pixel(bottom_cell_x, bottom_cell_y)
+            bottom_pixel = sample_pixel(center_cell_x, center_cell_y - CELL_PIXEL_BUFFER)
+            # Sample pixel at top of cell
+            top_pixel = sample_pixel(center_cell_x, center_cell_y + CELL_PIXEL_BUFFER)  
             # Determine if block is present based on pixel comparison
-            # If center of cell is different from bottom of cell, mark as occupied
-            if center_pixel != bottom_pixel:
-                board[row][col] = True
+            # If top of cell is different from bottom of cell, mark as occupied
+            dif = abs(np.array(top_pixel) - np.array(bottom_pixel))
+            if any(dif > 5):
+                board[row][col] = 1
     return board
 
 def print_board(board):
@@ -204,4 +213,3 @@ def print_board(board):
         print("".join(['#' if cell else '.' for cell in row]))
     print()
 # --------------------
-

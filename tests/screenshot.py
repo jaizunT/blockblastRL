@@ -137,9 +137,9 @@ listener2.start()
 
 while True:
     if len(ls) >= 2:
-        # screenshot()
+        screenshot()
         # screenshot_img()
-        screenshot_bounding_box()
+        # screenshot_bounding_box()
     line = f"Cursor: ({pos['x']:.0f}, {pos['y']:.0f})"
     sys.stdout.write("\r" + line.ljust(40))
     sys.stdout.flush()
