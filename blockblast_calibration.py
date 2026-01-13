@@ -7,6 +7,7 @@ import threading
 from pathlib import Path
 
 CALIBRATION_PATH = Path(__file__).with_name("calibration.json")
+INFERENCE_CACHE_PATH = CALIBRATION_PATH.with_name("calibration_inference.json")
 CLASSES = [
     "1x1",
     "1x2",
@@ -214,6 +215,19 @@ def load_calibration():
     return json.loads(CALIBRATION_PATH.read_text())
 
 
+def load_inference_cache():
+    if not INFERENCE_CACHE_PATH.exists():
+        return {}
+    try:
+        return json.loads(INFERENCE_CACHE_PATH.read_text())
+    except json.JSONDecodeError:
+        return {}
+
+
+def save_inference_cache(cache):
+    INFERENCE_CACHE_PATH.write_text(json.dumps(cache, indent=2))
+
+
 def cell_center(cal, row, col):
     tl = cal["grid"]["tl"]
     br = cal["grid"]["br"]
@@ -236,6 +250,11 @@ TRAY_MAP_TARGETS = [
     (3, 7),
     (3, 3),
 ]
+
+
+def _parse_class_dims(class_name):
+    w, h = class_name.split("x")
+    return int(w), int(h)
 
 
 def _cursor_for_target(cal, tray_index, class_name, row, col):
@@ -282,7 +301,7 @@ def _apply_affine(coeffs, x, y):
     return float(out[0]), float(out[1])
 
 
-def _build_tray_mapping(cal, tray_a, tray_b):
+def _build_tray_mapping(cal, tray_a, tray_b, cache=None):
     offsets_by_tray = cal.get("class_offsets_by_tray", {})
     inferred_by_tray = cal.get("class_offsets_by_tray_inferred", {})
     shared = set(offsets_by_tray.get(str(tray_a), {})) & set(
@@ -292,6 +311,11 @@ def _build_tray_mapping(cal, tray_a, tray_b):
         shared = set(inferred_by_tray.get(str(tray_a), {})) & set(
             inferred_by_tray.get(str(tray_b), {})
         )
+    if not shared and cache:
+        key = f"{tray_a}->{tray_b}"
+        cached = cache.get("tray_mappings", {}).get(key)
+        if cached:
+            return cached
     if not shared:
         return None
 
@@ -311,7 +335,64 @@ def _build_tray_mapping(cal, tray_a, tray_b):
     return _fit_affine(points_a, points_b)
 
 
-def _infer_offset_from_other_tray(cal, tray_index, class_name):
+def _build_size_offset_models(cal):
+    if np is None:
+        return {}
+    offsets_by_tray = cal.get("class_offsets_by_tray", {})
+    inferred_by_tray = cal.get("class_offsets_by_tray_inferred", {})
+    models = {}
+    for tray_index in [0, 1, 2]:
+        tray_key = str(tray_index)
+        data = {}
+        data.update(offsets_by_tray.get(tray_key, {}))
+        data.update(inferred_by_tray.get(tray_key, {}))
+        if len(data) < 3:
+            continue
+        feats = []
+        targets = []
+        for class_name, offset in data.items():
+            w, h = _parse_class_dims(class_name)
+            feats.append([w, h, 1.0])
+            targets.append([offset.get("x", 0.0), offset.get("y", 0.0)])
+        x = np.array(feats, dtype=float)
+        y = np.array(targets, dtype=float)
+        coeffs, _, _, _ = np.linalg.lstsq(x, y, rcond=None)
+        models[tray_key] = {
+            "ax": float(coeffs[0, 0]),
+            "bx": float(coeffs[1, 0]),
+            "cx": float(coeffs[2, 0]),
+            "ay": float(coeffs[0, 1]),
+            "by": float(coeffs[1, 1]),
+            "cy": float(coeffs[2, 1]),
+        }
+    return models
+
+
+def _infer_offset_from_size_model(tray_index, class_name, size_models):
+    tray_key = str(tray_index)
+    model = size_models.get(tray_key)
+    if not model:
+        return None
+    w, h = _parse_class_dims(class_name)
+    x = model["ax"] * w + model["bx"] * h + model["cx"]
+    y = model["ay"] * w + model["by"] * h + model["cy"]
+    return {"x": x, "y": y, "inferred_from": "size_fit"}
+
+
+def build_inference_cache(cal):
+    cache = {"tray_mappings": {}, "size_offset_models": {}, "generated_at": time.time()}
+    for tray_a in [0, 1, 2]:
+        for tray_b in [0, 1, 2]:
+            if tray_a == tray_b:
+                continue
+            mapping = _build_tray_mapping(cal, tray_a, tray_b)
+            if mapping:
+                cache["tray_mappings"][f"{tray_a}->{tray_b}"] = mapping
+    cache["size_offset_models"] = _build_size_offset_models(cal)
+    return cache
+
+
+def _infer_offset_from_other_tray(cal, tray_index, class_name, cache=None):
     offsets_by_tray = cal.get("class_offsets_by_tray", {})
     inferred_by_tray = cal.get("class_offsets_by_tray_inferred", {})
     candidates = [
@@ -324,7 +405,7 @@ def _infer_offset_from_other_tray(cal, tray_index, class_name):
     for source_tray in candidates:
         if source_tray == tray_index:
             continue
-        mapping = _build_tray_mapping(cal, source_tray, tray_index)
+        mapping = _build_tray_mapping(cal, source_tray, tray_index, cache=cache)
         if mapping is None:
             continue
         source_cursor = _cursor_for_target(
@@ -360,6 +441,8 @@ def infer_missing_offsets(cal, classes=None, trays=None):
         return cal, 0
     classes = classes or CLASSES
     trays = trays if trays is not None else [0, 1, 2]
+    cache = load_inference_cache()
+    size_models = cache.get("size_offset_models") or _build_size_offset_models(cal)
     offsets_by_tray = cal.get("class_offsets_by_tray", {})
     inferred_by_tray = cal.get("class_offsets_by_tray_inferred", {})
     updated = 0
@@ -372,17 +455,20 @@ def infer_missing_offsets(cal, classes=None, trays=None):
         for class_name in classes:
             if class_name in offsets_by_tray[tray_key] or class_name in inferred_by_tray[tray_key]:
                 continue
-            inferred = _infer_offset_from_other_tray(cal, tray_index, class_name)
+            inferred = _infer_offset_from_other_tray(cal, tray_index, class_name, cache=cache)
+            if inferred is None:
+                inferred = _infer_offset_from_size_model(tray_index, class_name, size_models)
             if inferred is None:
                 continue
             inferred_by_tray[tray_key][class_name] = inferred
             updated += 1
     cal["class_offsets_by_tray"] = offsets_by_tray
     cal["class_offsets_by_tray_inferred"] = inferred_by_tray
+    save_inference_cache(build_inference_cache(cal))
     return cal, updated
 
 
-def drag_piece(tray_index, row, col, duration=0.15, class_name=None, debug=False):
+def drag_piece(tray_index, row, col, duration=0.5, class_name=None, debug=False):
     require_deps()
     cal = load_calibration()
 
@@ -425,7 +511,11 @@ def drag_piece(tray_index, row, col, duration=0.15, class_name=None, debug=False
         elif tray_key in inferred_by_tray and class_name in inferred_by_tray[tray_key]:
             offset = inferred_by_tray[tray_key][class_name]
         else:
-            offset = _infer_offset_from_other_tray(cal, tray_index, class_name)
+            cache = load_inference_cache()
+            offset = _infer_offset_from_other_tray(cal, tray_index, class_name, cache=cache)
+            if offset is None:
+                size_models = cache.get("size_offset_models") or _build_size_offset_models(cal)
+                offset = _infer_offset_from_size_model(tray_index, class_name, size_models)
     if offset:
         dest = (dest[0] - offset.get("x", 0), dest[1] - offset.get("y", 0))
     if transform:
@@ -645,6 +735,10 @@ def main():
     reset_parser.add_argument("--tray", dest="tray_index", type=int, choices=[0, 1, 2], help="Tray index to reset.")
 
     sub.add_parser("infer", help="Infer missing class offsets from other trays.")
+    sub.add_parser(
+        "cache",
+        help="Save tray mappings and size-fit models for future inference.",
+    )
 
     args = parser.parse_args()
 
@@ -678,6 +772,12 @@ def main():
         cal, updated = infer_missing_offsets(cal)
         CALIBRATION_PATH.write_text(json.dumps(cal, indent=2))
         print(f"Inferred {updated} missing offset(s) into {CALIBRATION_PATH}")
+        return
+    if args.cmd == "cache":
+        cal = load_calibration()
+        cache = build_inference_cache(cal)
+        save_inference_cache(cache)
+        print(f"Saved inference cache to {INFERENCE_CACHE_PATH}")
         return
 
 

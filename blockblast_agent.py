@@ -1,4 +1,5 @@
 import random
+import time
 import numpy as np
 import torch
 import torch.nn as nn
@@ -16,6 +17,12 @@ torch.manual_seed(seed)
 BOARD_SIZE = 8
 TRAY_COUNT = 3
 TRAY_PAD_SIZE = 5
+DEBUG = True
+
+
+def debug(msg):
+    if DEBUG:
+        print(f"[agent] {msg}", flush=True)
 
 class BlockBlastEnv:
     def __init__(self):
@@ -23,6 +30,7 @@ class BlockBlastEnv:
         self.moves_since_last_clear = 0
         self.lines_cleared_last_move = 0
         self.combo_count = 0
+        self.start = True
 
     def _pad_tray(self, tray, size=TRAY_PAD_SIZE):
         if tray is None:
@@ -42,8 +50,13 @@ class BlockBlastEnv:
         return board, tray_tensors, moves, lines, combo
 
     def reset(self):
-        play.click_restart()
+        debug("reset: clicking restart")
+        if self.start:
+            self.start = False
+        else:
+            play.click_restart()
         status.time.sleep(2)
+        debug("reset: refreshing data")
         self.refresh_data()
         self.moves_since_last_clear = 0
         self.lines_cleared_last_move = 0
@@ -52,6 +65,7 @@ class BlockBlastEnv:
 
     def step(self, action):
         tray_index, x, y = action
+        debug(f"step: action tray={tray_index} x={x} y={y}")
         block = self.trays[tray_index]
         prev_score = self.score
         prev_board = self.board.copy()
@@ -59,17 +73,24 @@ class BlockBlastEnv:
         invalid_move = play.invalid_placement(x, y, block, self.board)
 
         if invalid_move:
+            debug("step: invalid move")
             reward = -5.0
             done = False
             return self._encode_state(), reward, done, {}
         
-        self.lines_cleared_last_move = play.place_block(tray_index, x, y, block)
+        debug("step: placing block")
+        self.lines_cleared_last_move = play.place_block(self.board,tray_index, x, y, block)
         # increase or reset 'moves since last clear' based on lines cleared
         self.moves_since_last_clear = 0 if self.lines_cleared_last_move > 0 else self.moves_since_last_clear + 1
 
         # wait for background to stabilize before refreshing data
+        wait_start = time.time()
+        last_log = wait_start
         while not status.background_stable():
-            pass
+            if DEBUG and time.time() - last_log > 0.5:
+                debug(f"step: waiting for background_stable ({time.time() - wait_start:.1f}s)")
+                last_log = time.time()
+        debug("step: background stable, refreshing data")
         self.refresh_data()
 
         # increase or reset 'combo count' based on lines cleared and previous combo status
@@ -90,11 +111,14 @@ class BlockBlastEnv:
                 self.combo_count = 0
 
         reward = self.score - prev_score
-        done = play.check_loss(prev_board, tray_index, x, y, self.trays)
+        done = play.check_loss(prev_board, block, x, y, self.trays)
+        debug(f"step: reward={reward} done={done} lines_cleared={self.lines_cleared_last_move}")
         return self._encode_state(), reward, done, {}
     
     def refresh_data(self):
+        debug("refresh_data: screenshot")
         data = status.screenshot()
+        debug("refresh_data: board/trays/score/combo")
         self.board = status.get_board_state(data)
         self.trays = play.get_blocks(data)
         self.score = status.get_score(data)
@@ -168,11 +192,12 @@ def log_action_to_file(tray_tensors, board, action, moves_since_last_clear, line
     
 
 def main():
+    print("BlockBlast RL Agent Starting...")
     env = BlockBlastEnv()
     action_dim = 3 * 8 * 8
     policy = PolicyNet(action_dim)
     optimizer = torch.optim.Adam(policy.parameters(), lr=1e-3)
-
+    print("Starting training loop...")
     # Placeholder training loop structure.
     for _ in range(10):
         state = env.reset()

@@ -16,7 +16,7 @@ except ImportError:
     pyautogui = None
 
 
-CALIBRATION_PATH = Path(__file__).with_name("calibration.json")
+CALIBRATION_PATH = Path(__file__).resolve().parents[1] / "calibration.json"
 
 
 def require_deps():
