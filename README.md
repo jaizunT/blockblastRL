@@ -21,29 +21,32 @@ You will be prompted to click:
 2) Bottom-right of the 8x8 grid
 3) Center of tray pieces 0, 1, 2
 4) A safe focus point inside the iPhone Mirroring window
-5) For each tray piece: click and hold, press Space to capture pickup cursor, then drag to (3,7) and press Space, then to (8,2) and press Space
+5) For each tray piece: click and hold, press Space to capture pickup cursor, then drag to (2,6) and press Space, then to (7,1) and press Space
 
 Shape Class Calibration
-- Edit the class list in `blockblast_rl.py` (CLASSES) to match your needs.
-- Calibrate one class at a time (includes tray pickup/scale for that tray):
+- Edit the class list in `blockblast_calibration.py` (CLASSES) to match your needs.
+- Calibrate one class at a time (records tray pickup + a class-specific drag transform + class offset):
   python blockblast_calibration.py calibrate-class <class_name> <tray_index 0-2>
 - See which classes still need calibration:
   python blockblast_calibration.py status
 - Reset calibration data:
   python blockblast_calibration.py reset calibration
   python blockblast_calibration.py reset pair --class 3x3 --tray 0
-- Infer missing tray/class offsets from other trays (stored separately):
+  python blockblast_calibration.py reset class --class 3x3 --tray 0
+- Infer missing tray/class offsets and transforms from other trays (stored separately):
   python blockblast_calibration.py infer
+- Save inference cache (tray mappings + size-fit models):
+  python blockblast_calibration.py cache
 
 Calibration Summary
-- Calibration is two layers:
-  1) Tray transform: how cursor motion maps to piece motion for a tray slot.
-  2) Class offset: shape-specific pickup jump (constant offset) after the tray transform.
-- `calibrate-class` does both for a single (class, tray) in one flow.
-- `place` uses the tray transform + optional class offset (via `--class`).
-  - Class offsets are stored per tray; calibrate the same class on each tray where it appears.
-  - If a class offset is missing for a tray but exists on another tray, the code infers it
-    using a tray-to-tray affine mapping from existing shared class calibrations.
+- Calibration now uses class-specific transforms:
+  1) Tray pickup: where you click to pick up a piece (per tray).
+  2) Class transform: how cursor motion maps to piece motion (per tray + class).
+  3) Class offset: shape-specific pickup jump (constant offset) after the transform.
+- `calibrate-class` records the class transform + class offset for that (tray, class).
+- `place` uses the class transform + class offset (via `--class`).
+  - Missing class transforms/offsets are inferred from other trays using tray-to-tray
+    affine mappings and a size-fit fallback (stored in `calibration_inference.json`).
 
 Place a Piece
 conda activate blockblast
@@ -70,5 +73,5 @@ Status Processing (blockblast_status.py)
   - Compare center pixel vs a lower pixel in the same cell to mark occupancy.
 
 Notes
-- The script uses drag-and-drop from the tray center to the target cell center.
+- The script uses drag-and-drop from the tray pickup point to the target cell center.
 - Failsafe: move the cursor to a screen corner to abort (pyautogui default).

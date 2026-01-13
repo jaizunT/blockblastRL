@@ -64,17 +64,18 @@ class BlockBlastEnv:
         return self._encode_state()
 
     def step(self, action):
-        time.sleep(2)  # brief pause before action
-        tray_index, x, y = action
+        tray_index, row, col = action
         # debug print board
         debug("step: current board")
         if DEBUG: status.print_board(self.board)
-        debug(f"step: action tray={tray_index} x={x} y={y}")
+        debug(f"step: action tray={tray_index} row={row} col={col}")
+
         block = self.trays[tray_index]
         prev_score = self.score
         prev_board = self.board.copy()
         prev_combo = self.in_combo
-        invalid_move = play.invalid_placement(x, y, block, self.board)
+
+        invalid_move = play.invalid_placement(col, row, block, self.board)
 
         if invalid_move:
             debug("step: invalid move")
@@ -82,21 +83,39 @@ class BlockBlastEnv:
             done = False
             return self._encode_state(), reward, done, {}
         
+        lost = play.check_loss(prev_board, block, col, row, self.trays)
+        
         debug("step: placing block")
-        self.lines_cleared_last_move = play.place_block(self.board,tray_index, x, y, block)
+        self.lines_cleared_last_move = play.place_block(self.board, tray_index, col, row, block)
         # increase or reset 'moves since last clear' based on lines cleared
         self.moves_since_last_clear = 0 if self.lines_cleared_last_move > 0 else self.moves_since_last_clear + 1
 
         # wait for background to stabilize before refreshing data
-        wait_start = time.time()
-        last_log = wait_start
+        time.sleep(0.2)
         while not status.background_stable():
-            if DEBUG and time.time() - last_log > 0.5:
-                debug(f"step: waiting for background_stable ({time.time() - wait_start:.1f}s)")
-                last_log = time.time()
+            time.sleep(0.05)
         debug("step: background stable, refreshing data")
         self.refresh_data()
 
+        if DEBUG:
+            debug(f"step: block shape")
+            status.print_block(block)
+        if play.placed_correctly(col, row, block, self.board, prev_board):
+            debug("step: placed correctly")
+        else:
+            debug("step: placement mismatch detected!")
+            print("Expected board after placement:")
+            expected = np.array(prev_board)
+            block_h, block_w = block.shape
+            for i in range(block_h):
+                for j in range(block_w):
+                    if block[i][j] == 1:
+                        expected[row + i][col + j] = 1
+            status.print_board(expected)
+            print("Actual board after placement:")
+            status.print_board(self.board)
+            raise RuntimeError("Placement verification failed")
+        
         # increase or reset 'combo count' based on lines cleared and previous combo status
         if prev_combo:
             # if not in combo now, reset combo count
@@ -115,7 +134,7 @@ class BlockBlastEnv:
                 self.combo_count = 0
 
         reward = self.score - prev_score
-        done = play.check_loss(prev_board, block, x, y, self.trays)
+        done = lost
         debug(f"step: reward={reward} done={done} lines_cleared={self.lines_cleared_last_move}")
         return self._encode_state(), reward, done, {}
     
@@ -165,13 +184,13 @@ def action_index_to_tuple(action_idx, grid_size=8, trays=3):
     per_tray = grid_size * grid_size
     tray = action_idx // per_tray
     rem = action_idx % per_tray
-    x = rem % grid_size
-    y = rem // grid_size
-    return tray, x, y
+    col = rem % grid_size
+    row = rem // grid_size
+    return tray, row, col
 
 # Logs data to moves.txt for analysis
 def log_action_to_file(tray_tensors, board, action, moves_since_last_clear, lines_cleared_last_move, combo_count):
-    tray_index, x, y = action
+    tray_index, row, col = action
     with open("moves.txt", "a") as f:
         # Writes board state
         f.write("Board:\n")
@@ -191,7 +210,7 @@ def log_action_to_file(tray_tensors, board, action, moves_since_last_clear, line
         f.write(f"Lines cleared last move: {lines_cleared_last_move}\n")
         f.write(f"Combo count: {combo_count}\n")
         # Writes action taken
-        f.write(f"Action: Tray {tray_index} at ({x}, {y})\n")
+        f.write(f"Action: Tray {tray_index} at (row={row}, col={col})\n")
         f.write("\n")
     
 

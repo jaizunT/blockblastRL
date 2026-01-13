@@ -15,7 +15,9 @@ def place_block(board, tray_index, grid_x, grid_y, block):
 
     # Get lines cleared from action
     lines_cleared = get_lines_cleared(board, grid_x, grid_y, block)
-    calibration.drag_piece(tray_index, grid_x, grid_y, class_name=f"{block.shape[0]}x{block.shape[1]}")
+    calibration.drag_piece(
+        tray_index, grid_y, grid_x, class_name=f"{block.shape[0]}x{block.shape[1]}"
+    )
     return lines_cleared
     # if not self.refresh_status():
     #     print("Loss detected after placement.")
@@ -70,7 +72,7 @@ def placed_correctly(grid_x, grid_y, block, current_board, previous_board):
         for r in range(board_h):
             expected[r][c] = 0
 
-    return current_board == expected
+    return np.array_equal(np.array(current_board), np.array(expected))
 
 def place_blocks(tray_indices, positions, blocks):
     for tray_index, (grid_x, grid_y), block in zip(tray_indices, positions, blocks):
