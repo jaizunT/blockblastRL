@@ -64,7 +64,11 @@ class BlockBlastEnv:
         return self._encode_state()
 
     def step(self, action):
+        time.sleep(2)  # brief pause before action
         tray_index, x, y = action
+        # debug print board
+        debug("step: current board")
+        if DEBUG: status.print_board(self.board)
         debug(f"step: action tray={tray_index} x={x} y={y}")
         block = self.trays[tray_index]
         prev_score = self.score
@@ -201,24 +205,25 @@ def main():
     # Placeholder training loop structure.
     for _ in range(10):
         state = env.reset()
-        board, trays, moves, lines, combo = state
-        board_tensor = torch.tensor(board, dtype=torch.float32).unsqueeze(0)
-        trays_tensor = torch.tensor(np.stack(trays), dtype=torch.float32).unsqueeze(0)
-        moves_tensor = torch.tensor([moves], dtype=torch.float32)
-        lines_tensor = torch.tensor([lines], dtype=torch.float32)
-        combo_tensor = torch.tensor([combo], dtype=torch.float32)
-        logits = policy(
-            board_tensor, trays_tensor, moves_tensor, lines_tensor, combo_tensor
-        )
-        action_idx, logp = sample_action(logits)
-        action = action_index_to_tuple(action_idx)
-        (next_state, reward, done, _) = env.step(action)
-        loss = -logp * reward
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-        if done:
-            break
+        done = False
+        while not done:
+            board, trays, moves, lines, combo = state
+            board_tensor = torch.tensor(board, dtype=torch.float32).unsqueeze(0)
+            trays_tensor = torch.tensor(np.stack(trays), dtype=torch.float32).unsqueeze(0)
+            moves_tensor = torch.tensor([moves], dtype=torch.float32)
+            lines_tensor = torch.tensor([lines], dtype=torch.float32)
+            combo_tensor = torch.tensor([combo], dtype=torch.float32)
+            logits = policy(
+                board_tensor, trays_tensor, moves_tensor, lines_tensor, combo_tensor
+            )
+            action_idx, logp = sample_action(logits)
+            action = action_index_to_tuple(action_idx)
+            (next_state, reward, done, _) = env.step(action)
+            loss = -logp * reward
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            state = next_state
 
 
 if __name__ == "__main__":

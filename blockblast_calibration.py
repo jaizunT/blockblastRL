@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import atexit
 import json
 import sys
 import time
@@ -56,6 +57,18 @@ def require_deps():
         print("Missing dependencies: " + ", ".join(missing))
         print("Install with: pip install " + " ".join(missing))
         sys.exit(1)
+
+
+def _safe_mouse_up():
+    if pyautogui is None:
+        return
+    try:
+        pyautogui.mouseUp()
+    except Exception:
+        pass
+
+
+atexit.register(_safe_mouse_up)
 
 
 def _start_live_cursor(label):
@@ -225,7 +238,16 @@ def load_inference_cache():
 
 
 def save_inference_cache(cache):
-    INFERENCE_CACHE_PATH.write_text(json.dumps(cache, indent=2))
+    def _to_jsonable(obj):
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        if isinstance(obj, dict):
+            return {k: _to_jsonable(v) for k, v in obj.items()}
+        if isinstance(obj, (list, tuple)):
+            return [_to_jsonable(v) for v in obj]
+        return obj
+
+    INFERENCE_CACHE_PATH.write_text(json.dumps(_to_jsonable(cache), indent=2))
 
 
 def cell_center(cal, row, col):
@@ -386,7 +408,7 @@ def build_inference_cache(cal):
             if tray_a == tray_b:
                 continue
             mapping = _build_tray_mapping(cal, tray_a, tray_b)
-            if mapping:
+            if mapping is not None:
                 cache["tray_mappings"][f"{tray_a}->{tray_b}"] = mapping
     cache["size_offset_models"] = _build_size_offset_models(cal)
     return cache
@@ -453,7 +475,7 @@ def infer_missing_offsets(cal, classes=None, trays=None):
         if tray_key not in inferred_by_tray:
             inferred_by_tray[tray_key] = {}
         for class_name in classes:
-            if class_name in offsets_by_tray[tray_key] or class_name in inferred_by_tray[tray_key]:
+            if class_name in offsets_by_tray[tray_key]:
                 continue
             inferred = _infer_offset_from_other_tray(cal, tray_index, class_name, cache=cache)
             if inferred is None:
@@ -704,6 +726,24 @@ def reset_calibration(scope, class_name=None, tray_index=None):
             f"Cleared class '{class_name}' and tray {tray_index} in {CALIBRATION_PATH}"
         )
         return
+    if scope == "class":
+        if not class_name or tray_index is None:
+            print("Missing class name or tray index for class reset.")
+            return
+        offsets_by_tray = cal.get("class_offsets_by_tray", {})
+        inferred_by_tray = cal.get("class_offsets_by_tray_inferred", {})
+        tray_key = str(tray_index)
+        if tray_key in offsets_by_tray and class_name in offsets_by_tray[tray_key]:
+            del offsets_by_tray[tray_key][class_name]
+            cal["class_offsets_by_tray"] = offsets_by_tray
+        if tray_key in inferred_by_tray and class_name in inferred_by_tray[tray_key]:
+            del inferred_by_tray[tray_key][class_name]
+            cal["class_offsets_by_tray_inferred"] = inferred_by_tray
+        CALIBRATION_PATH.write_text(json.dumps(cal, indent=2))
+        print(
+            f"Cleared class '{class_name}' for tray {tray_index} in {CALIBRATION_PATH}"
+        )
+        return
     print("Unknown reset scope. Use: calibration, pair.")
 
 
@@ -728,7 +768,7 @@ def main():
     reset_parser = sub.add_parser("reset", help="Reset calibration data.")
     reset_parser.add_argument(
         "scope",
-        choices=["calibration", "pair"],
+        choices=["calibration", "pair", "class"],
         help="What to reset.",
     )
     reset_parser.add_argument("--class", dest="class_name", type=str, help="Class name to reset.")
