@@ -15,7 +15,7 @@ def place_block(board, tray_index, grid_x, grid_y, block):
 
     # Get lines cleared from action
     lines_cleared = get_lines_cleared(board, grid_x, grid_y, block)
-    calibration.drag_piece(tray_index, grid_x, grid_y, class_name=f"{block.shape[1]}x{block.shape[0]}")
+    calibration.drag_piece(tray_index, grid_x, grid_y, class_name=f"{block.shape[0]}x{block.shape[1]}")
     return lines_cleared
     # if not self.refresh_status():
     #     print("Loss detected after placement.")
@@ -155,5 +155,19 @@ def click_restart():
     while status.sample_pixel(restart_pixel['x'], restart_pixel['y']) != tuple(restart_pixel_value):
         time.sleep(0.05)
     status.pyautogui.click(restart_pixel['x'], restart_pixel['y'])
-    time.sleep(2)  # Wait for game to start
+    time.sleep(1.5)  # Wait for game to start
 
+def click_settings_replay():
+    focus_pixel = status.CALIBRATION["focus"]
+    status.pyautogui.click(focus_pixel['x'], focus_pixel['y'])
+    time.sleep(0.1)
+    settings_pixel = status.CALIBRATION["settings_pixel"]
+
+    status.pyautogui.click(settings_pixel['x'], settings_pixel['y'])
+    time.sleep(0.1)
+
+    replay_pixel = status.CALIBRATION["replay_pixel"]
+    status.pyautogui.click(replay_pixel['x'], replay_pixel['y'])
+    time.sleep(1.5)  # Wait for game to start
+    
+    
