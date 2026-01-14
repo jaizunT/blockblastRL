@@ -577,7 +577,7 @@ def infer_missing_offsets(cal, classes=None, trays=None):
     return cal, updated, updated_transforms
 
 
-def drag_piece(tray_index, row, col, duration=0.1, class_name=None, debug=False):
+def drag_piece(tray_index, row, col, duration=0.12, class_name=None, debug=False):
     require_deps()
     cal = load_calibration()
 

@@ -46,33 +46,29 @@ def invalid_placement(grid_x, grid_y, block, board):
                 return True  # Overlaps existing block
     return False
 
-def placed_correctly(grid_x, grid_y, block, current_board, previous_board):
-    # Verify the block filled expected cells, accounting for line clears.
-    board_h = len(current_board)
-    board_w = len(current_board[0]) if board_h else 0
-    if hasattr(block, "shape"):
-        block_h, block_w = block.shape
-    else:
-        block_h = len(block)
-        block_w = len(block[0]) if block_h else 0
+def expected_board_after_placement(grid_x, grid_y, block, previous_board):
+    board = np.array(previous_board, dtype=int, copy=True)
+    block_h, block_w = block.shape
 
-    expected = [row[:] for row in previous_board]
     for i in range(block_h):
         for j in range(block_w):
             if block[i][j] == 1:
-                expected[grid_y + i][grid_x + j] = 1
+                board[grid_y + i, grid_x + j] = 1
 
-    full_rows = [r for r in range(board_h) if all(expected[r][c] != 0 for c in range(board_w))]
-    full_cols = [c for c in range(board_w) if all(expected[r][c] != 0 for r in range(board_h))]
+    full_rows = np.where(np.all(board != 0, axis=1))[0]
+    full_cols = np.where(np.all(board != 0, axis=0))[0]
 
-    for r in full_rows:
-        for c in range(board_w):
-            expected[r][c] = 0
-    for c in full_cols:
-        for r in range(board_h):
-            expected[r][c] = 0
+    if full_rows.size:
+        board[full_rows, :] = 0
+    if full_cols.size:
+        board[:, full_cols] = 0
 
-    return np.array_equal(np.array(current_board), np.array(expected))
+    return board
+
+
+def placed_correctly(grid_x, grid_y, block, current_board, previous_board):
+    expected = expected_board_after_placement(grid_x, grid_y, block, previous_board)
+    return np.array_equal(np.array(current_board), expected)
 
 def place_blocks(tray_indices, positions, blocks):
     for tray_index, (grid_x, grid_y), block in zip(tray_indices, positions, blocks):
@@ -123,18 +119,44 @@ def get_lines_cleared(board, grid_x, grid_y, block):
     return len(rows_cleared) + len(cols_cleared)
 
 # Checks internal board state with currently placed piece for loss condition if rest of pieces can't fit anywhere.
-def check_loss(board, block, grid_x, grid_y, blocks):
-    # Create a temporary board with the current block placed
-    temp_board = board.copy()
-    if block is None:
-        return False
-    block_h, block_w = block.shape
-    for i in range(block_h):
-        for j in range(block_w):
-            if block[i][j] == 1:
-                temp_board[grid_y + i][grid_x + j] = 1
+def check_loss(board, block, grid_x, grid_y, blocks, debug=False):
+    # # Create a temporary board with the current block placed
+    # temp_board = board.copy()
+    # if block is None:
+    #     return False
+    # block_h, block_w = block.shape
+    # for i in range(block_h):
+    #     for j in range(block_w):
+    #         if block[i][j] == 1:
+    #             temp_board[grid_y + i][grid_x + j] = 1
 
+    # If loss pixels different from bg pixels and loss pixels are similar and bg pixels are similar, then it's a loss
+    loss_pixel1 = status.CALIBRATION["loss_pixel1"] 
+    loss_pixel2 = status.CALIBRATION["loss_pixel2"]
+    bg_pixel1 = status.CALIBRATION["bg_pixel1"]
+    bg_pixel2 = status.CALIBRATION["bg_pixel2"]
+    lr1, lg1, lb1 = status.sample_pixel(loss_pixel1['x'], loss_pixel1['y'])
+    lr2, lg2, lb2 = status.sample_pixel(loss_pixel2['x'], loss_pixel2['y'])
+    br1, bg1, bb1 = status.sample_pixel(bg_pixel1['x'], bg_pixel1['y'])
+    br2, bg2, bb2 = status.sample_pixel(bg_pixel2['x'], bg_pixel2['y'])
+    if (status.color_difference((lr1, lg1, lb1), (lr2, lg2, lb2)) < 15 and
+        status.color_difference((br1, bg1, bb1), (br2, bg2, bb2)) < 15 and
+        status.color_difference((lr1, lg1, lb1), (br1, bg1, bb1)) > 30):
+        if debug:
+            print("[loss] loss pixels indicate loss")
+        return True
+    return False
+
+
+    
     # Check if any of the remaining blocks can fit anywhere on the temp_board
+    if debug:
+        print("[loss] evaluating remaining blocks:")
+        for i, b in enumerate(blocks):
+            if b is None:
+                print(f"[loss] tray {i}: None")
+            else:
+                print(f"[loss] tray {i}: {b.shape}")
     for b in blocks:
         if b is block or b is None:
             continue  # Skip the block that was just placed
@@ -142,7 +164,11 @@ def check_loss(board, block, grid_x, grid_y, blocks):
         for y in range(8 - b_h + 1):
             for x in range(8 - b_w + 1):
                 if not invalid_placement(x, y, b, temp_board):
+                    if debug:
+                        print(f"[loss] found valid placement for {b.shape} at ({y},{x})")
                     return False  # Found a valid placement, not a loss
+    if debug:
+        print("[loss] no valid placements found")
     return True  # No valid placements found, loss condition met
 
 # Click on correct position to start game
@@ -154,19 +180,18 @@ def click_restart():
     #     for x in range(0, 1000, 50):
     #         pixel_value = status.sample_pixel(x, y)
     #         print(f"Pixel at ({x}, {y}): {pixel_value}")
-    while status.sample_pixel(restart_pixel['x'], restart_pixel['y']) != tuple(restart_pixel_value):
+    while status.sample_pixel(restart_pixel['x'], restart_pixel['y'], snapshot=status.screenshot()) != tuple(restart_pixel_value):
         time.sleep(0.05)
     status.pyautogui.click(restart_pixel['x'], restart_pixel['y'])
+    print("Restart Button pressed")
     time.sleep(1.5)  # Wait for game to start
 
 def click_settings_replay():
     focus_pixel = status.CALIBRATION["focus"]
     status.pyautogui.click(focus_pixel['x'], focus_pixel['y'])
-    time.sleep(0.1)
     settings_pixel = status.CALIBRATION["settings_pixel"]
 
     status.pyautogui.click(settings_pixel['x'], settings_pixel['y'])
-    time.sleep(0.1)
 
     replay_pixel = status.CALIBRATION["replay_pixel"]
     status.pyautogui.click(replay_pixel['x'], replay_pixel['y'])

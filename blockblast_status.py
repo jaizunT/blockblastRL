@@ -260,6 +260,8 @@ def get_board_state(snapshot=None):
                 board[row, col] = 1
 
     return board
+def color_difference(pixel1, pixel2):
+    return sum(abs(int(a) - int(b)) for a, b in zip(pixel1, pixel2))
 
 def print_board(board):
     for row in board:

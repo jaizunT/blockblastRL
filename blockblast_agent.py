@@ -7,6 +7,7 @@ import torch.nn as nn
 import blockblast_calibration as calibration
 import blockblast_status as status
 import blockblast_play as play
+import blockblast_auto_calibrate as auto
 
 # Scaffold for a BlockBlast RL agent using PyTorch.
 seed = 42
@@ -27,6 +28,7 @@ def debug(msg):
 class BlockBlastEnv:
     def __init__(self):
         self.refresh_data()
+        self.game = 0
         self.moves_since_last_clear = 0
         self.lines_cleared_last_move = 0
         self.combo_count = 0
@@ -38,6 +40,10 @@ class BlockBlastEnv:
         tray_arr = np.array(tray, dtype=np.float32)
         h, w = tray_arr.shape
         padded = np.zeros((size, size), dtype=np.float32)
+        if h > size or w > size:
+            debug(f"pad_tray: cropping tray {h}x{w} to {size}x{size}")
+            tray_arr = tray_arr[:size, :size]
+            h, w = tray_arr.shape
         padded[:h, :w] = tray_arr
         return padded
 
@@ -61,9 +67,11 @@ class BlockBlastEnv:
         self.moves_since_last_clear = 0
         self.lines_cleared_last_move = 0
         self.combo_count = 0
+        self.game += 1
         return self._encode_state()
 
     def step(self, action):
+        # time.sleep(0.2)  # brief pause before action
         tray_index, row, col = action
         # debug print board
         debug("step: current board")
@@ -71,27 +79,52 @@ class BlockBlastEnv:
         debug(f"step: action tray={tray_index} row={row} col={col}")
 
         block = self.trays[tray_index]
-        prev_score = self.score
-        prev_board = self.board.copy()
-        prev_combo = self.in_combo
+        pre_state = self._encode_state()
 
-        invalid_move = play.invalid_placement(col, row, block, self.board)
-
-        if invalid_move:
-            debug("step: invalid move")
+        # If tray is empty, negative reward
+        if block is None:
+            debug("step: empty tray selected, invalid move")
             reward = -5.0
             done = False
             return self._encode_state(), reward, done, {}
         
-        lost = play.check_loss(prev_board, block, col, row, self.trays)
+        prev_score = self.score
+        prev_board = self.board.copy()
+        prev_combo = self.in_combo
+
+        # If block not calibrated, raise exception
+        class_name = f"{block.shape[0]}x{block.shape[1]}"
+        if not auto.is_class_calibrated(class_name, tray_index):
+            debug(f"step: block not calibrated for tray {tray_index} class {class_name}")
+            status.print_block(block)
+            raise Exception("Block not calibrated, please run auto-calibration script.")
         
+        invalid_move = play.invalid_placement(col, row, block, self.board)
+
+        if invalid_move:
+            debug("step: overlaps / out of bounds, invalid move")
+            reward = -5.0
+            done = False
+            return self._encode_state(), reward, done, {}
+        
+        # time.sleep(0.5) # brief pause before placement
+
         debug("step: placing block")
         self.lines_cleared_last_move = play.place_block(self.board, tray_index, col, row, block)
+        
         # increase or reset 'moves since last clear' based on lines cleared
         self.moves_since_last_clear = 0 if self.lines_cleared_last_move > 0 else self.moves_since_last_clear + 1
 
-        # wait for background to stabilize before refreshing data
-        time.sleep(0.2)
+        # wait for background to stabilize before refreshing data if only one tray left that is not None
+        if sum(1 for b in self.trays if b is not None) == 1:
+            debug("step: batch resetting, waiting longer for stability")
+            time.sleep(0.5)
+        if self.lines_cleared_last_move > 0:
+            debug("step: lines cleared, waiting longer for stability")
+            time.sleep(1.0*self.lines_cleared_last_move)
+        if not invalid_move: 
+            debug("step: block placed, waiting until tray clears for stability")
+            time.sleep(0.67) # make sure read tray isn't messed up
         while not status.background_stable():
             time.sleep(0.05)
         debug("step: background stable, refreshing data")
@@ -100,17 +133,20 @@ class BlockBlastEnv:
         if DEBUG:
             debug(f"step: block shape")
             status.print_block(block)
-        if play.placed_correctly(col, row, block, self.board, prev_board):
+        
+        lost = play.check_loss(prev_board, block, col, row, self.trays, debug=DEBUG)
+        if lost:
+            debug("step: loss detected, skipping placement verification")
+            reward = self.score - prev_score
+            done = True
+            debug(f"step: reward={reward} done={done} lines_cleared={self.lines_cleared_last_move}")
+            return pre_state, reward, done, {}
+        elif play.placed_correctly(col, row, block, self.board, prev_board):
             debug("step: placed correctly")
         else:
             debug("step: placement mismatch detected!")
             print("Expected board after placement:")
-            expected = np.array(prev_board)
-            block_h, block_w = block.shape
-            for i in range(block_h):
-                for j in range(block_w):
-                    if block[i][j] == 1:
-                        expected[row + i][col + j] = 1
+            expected = play.expected_board_after_placement(col, row, block, prev_board)
             status.print_board(expected)
             print("Actual board after placement:")
             status.print_board(self.board)
@@ -134,7 +170,7 @@ class BlockBlastEnv:
                 self.combo_count = 0
 
         reward = self.score - prev_score
-        done = lost
+        done = False
         debug(f"step: reward={reward} done={done} lines_cleared={self.lines_cleared_last_move}")
         return self._encode_state(), reward, done, {}
     
@@ -155,7 +191,11 @@ class PolicyNet(nn.Module):
         super().__init__()
         input_dim = (BOARD_SIZE * BOARD_SIZE) + (TRAY_COUNT * TRAY_PAD_SIZE * TRAY_PAD_SIZE) + 3
         self.net = nn.Sequential(
-            nn.Linear(input_dim, 128),
+            nn.Linear(input_dim, 256),
+            nn.ReLU(),
+            nn.Linear(256, 256),
+            nn.ReLU(),
+            nn.Linear(256, 128),
             nn.ReLU(),
             nn.Linear(128, action_dim),
         )
