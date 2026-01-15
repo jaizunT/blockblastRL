@@ -132,7 +132,15 @@ def sample_tray(tray_tl, tray_br, snapshot=None):
             sample = int(cropped[i * CELL_LENGTH + CELL_LENGTH // 2, j * CELL_LENGTH + CELL_LENGTH // 2])
             if abs(sample - bg) > 10:
                 block[i][j] = 1
-    
+
+    rows_with_cells = np.where(block.any(axis=1))[0]
+    cols_with_cells = np.where(block.any(axis=0))[0]
+    if rows_with_cells.size == 0 or cols_with_cells.size == 0:
+        return None
+
+    block = block[rows_with_cells[0]:rows_with_cells[-1] + 1,
+                  cols_with_cells[0]:cols_with_cells[-1] + 1]
+
     return block
 
 def classify_tray(tray_index, snapshot=None):

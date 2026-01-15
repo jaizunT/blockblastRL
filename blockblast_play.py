@@ -184,7 +184,7 @@ def click_restart():
         time.sleep(0.05)
     status.pyautogui.click(restart_pixel['x'], restart_pixel['y'])
     print("Restart Button pressed")
-    time.sleep(1.5)  # Wait for game to start
+    time.sleep(1.6)  # Wait for game to start
 
 def click_settings_replay():
     focus_pixel = status.CALIBRATION["focus"]
@@ -195,6 +195,6 @@ def click_settings_replay():
 
     replay_pixel = status.CALIBRATION["replay_pixel"]
     status.pyautogui.click(replay_pixel['x'], replay_pixel['y'])
-    time.sleep(1.5)  # Wait for game to start
+    time.sleep(1.6)  # Wait for game to start
     
     

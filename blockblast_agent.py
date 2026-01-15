@@ -29,6 +29,10 @@ class BlockBlastEnv:
     def __init__(self):
         self.refresh_data()
         self.game = 0
+
+        self.invalid = 1
+        self.valid = 1
+
         self.moves_since_last_clear = 0
         self.lines_cleared_last_move = 0
         self.combo_count = 0
@@ -59,9 +63,9 @@ class BlockBlastEnv:
         debug("reset: clicking restart")
         if self.start:
             self.start = False
+            play.click_settings_replay()
         else:
             play.click_restart()
-        status.time.sleep(2)
         debug("reset: refreshing data")
         self.refresh_data()
         self.moves_since_last_clear = 0
@@ -71,8 +75,14 @@ class BlockBlastEnv:
         return self._encode_state()
 
     def step(self, action):
-        # time.sleep(0.2)  # brief pause before action
+        debug(f"Current game: {self.game}")
+        debug(f"Current score: {self.score}")
+        debug(f"Current combo: {self.in_combo}")
+
+        debug(f"step: invalid/valid ratio: {self.invalid / self.valid}")
+
         tray_index, row, col = action
+        reward = 0
         # debug print board
         debug("step: current board")
         if DEBUG: status.print_board(self.board)
@@ -83,8 +93,9 @@ class BlockBlastEnv:
 
         # If tray is empty, negative reward
         if block is None:
+            self.invalid += 1
             debug("step: empty tray selected, invalid move")
-            reward = -5.0
+            reward = -40.0
             done = False
             return self._encode_state(), reward, done, {}
         
@@ -103,7 +114,8 @@ class BlockBlastEnv:
 
         if invalid_move:
             debug("step: overlaps / out of bounds, invalid move")
-            reward = -5.0
+            reward = -20.0
+            self.invalid += 1
             done = False
             return self._encode_state(), reward, done, {}
         
@@ -118,18 +130,21 @@ class BlockBlastEnv:
         # wait for background to stabilize before refreshing data if only one tray left that is not None
         if sum(1 for b in self.trays if b is not None) == 1:
             debug("step: batch resetting, waiting longer for stability")
-            time.sleep(0.5)
+            time.sleep(0.35)
         if self.lines_cleared_last_move > 0:
             debug("step: lines cleared, waiting longer for stability")
-            time.sleep(1.0*self.lines_cleared_last_move)
+            reward += 10.0 * self.lines_cleared_last_move
+            time.sleep(0.5)
         if not invalid_move: 
+            self.valid += 1
+            reward += 2.0
             debug("step: block placed, waiting until tray clears for stability")
-            time.sleep(0.67) # make sure read tray isn't messed up
+            time.sleep(0.3) # make sure read tray isn't messed up
         while not status.background_stable():
             time.sleep(0.05)
         debug("step: background stable, refreshing data")
         self.refresh_data()
-
+        
         if DEBUG:
             debug(f"step: block shape")
             status.print_block(block)
@@ -137,20 +152,28 @@ class BlockBlastEnv:
         lost = play.check_loss(prev_board, block, col, row, self.trays, debug=DEBUG)
         if lost:
             debug("step: loss detected, skipping placement verification")
-            reward = self.score - prev_score
+            score_increase = self.score - prev_score
+            debug(f"step: score increase before loss: {score_increase}")
+            reward -= 100.0
+            reward += score_increase
             done = True
             debug(f"step: reward={reward} done={done} lines_cleared={self.lines_cleared_last_move}")
             return pre_state, reward, done, {}
-        elif play.placed_correctly(col, row, block, self.board, prev_board):
-            debug("step: placed correctly")
-        else:
-            debug("step: placement mismatch detected!")
-            print("Expected board after placement:")
-            expected = play.expected_board_after_placement(col, row, block, prev_board)
-            status.print_board(expected)
-            print("Actual board after placement:")
-            status.print_board(self.board)
-            raise RuntimeError("Placement verification failed")
+        
+        curr = time.time()
+        while not play.placed_correctly(col, row, block, self.board, prev_board):
+            time.sleep(0.05)
+            self.refresh_data()
+            if time.time() - curr > 5.0:
+                debug("step: placement verification timeout!")
+                print("Expected board after placement:")
+                expected = play.expected_board_after_placement(col, row, block, prev_board)
+                status.print_board(expected)
+                print("Actual board after placement:")
+                status.print_board(self.board)
+                raise RuntimeError("Placement verification timeout")
+        debug("step: placed correctly")
+
         
         # increase or reset 'combo count' based on lines cleared and previous combo status
         if prev_combo:
@@ -169,7 +192,9 @@ class BlockBlastEnv:
             else:
                 self.combo_count = 0
 
-        reward = self.score - prev_score
+        score_increase = self.score - prev_score
+        debug(f"step: score increase: {score_increase}")
+        reward += score_increase
         done = False
         debug(f"step: reward={reward} done={done} lines_cleared={self.lines_cleared_last_move}")
         return self._encode_state(), reward, done, {}
@@ -191,11 +216,7 @@ class PolicyNet(nn.Module):
         super().__init__()
         input_dim = (BOARD_SIZE * BOARD_SIZE) + (TRAY_COUNT * TRAY_PAD_SIZE * TRAY_PAD_SIZE) + 3
         self.net = nn.Sequential(
-            nn.Linear(input_dim, 256),
-            nn.ReLU(),
-            nn.Linear(256, 256),
-            nn.ReLU(),
-            nn.Linear(256, 128),
+            nn.Linear(input_dim, 128),
             nn.ReLU(),
             nn.Linear(128, action_dim),
         )
@@ -262,7 +283,7 @@ def main():
     optimizer = torch.optim.Adam(policy.parameters(), lr=1e-3)
     print("Starting training loop...")
     # Placeholder training loop structure.
-    for _ in range(10):
+    for _ in range(20):
         state = env.reset()
         done = False
         while not done:
@@ -275,7 +296,8 @@ def main():
             logits = policy(
                 board_tensor, trays_tensor, moves_tensor, lines_tensor, combo_tensor
             )
-            action_idx, logp = sample_action(logits)
+            valid_move_mask = get_valid_move_mask(env.board, env.trays)
+            action_idx, logp = sample_action(logits, mask=valid_move_mask)
             action = action_index_to_tuple(action_idx)
             (next_state, reward, done, _) = env.step(action)
             loss = -logp * reward
@@ -284,6 +306,22 @@ def main():
             optimizer.step()
             state = next_state
 
+def get_valid_move_mask(board, trays):
+    board_np = np.array(board)
+    mask = torch.zeros((1, 3 * 8 * 8), dtype=torch.bool)
+    for tray_index in range(3):
+        tray = trays[tray_index]
+        if tray is None:
+            # Explicitly keep all actions for empty trays masked out.
+            mask[0, tray_index * 64 : (tray_index + 1) * 64] = False
+            continue
+        h, w = tray.shape
+        for row in range(8 - h + 1):
+            for col in range(8 - w + 1):
+                if not play.invalid_placement(col, row, tray, board_np):
+                    action_idx = tray_index * 64 + row * 8 + col
+                    mask[0, action_idx] = True
+    return mask
 
 if __name__ == "__main__":
     main()
