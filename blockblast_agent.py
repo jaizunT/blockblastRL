@@ -61,6 +61,35 @@ class BlockBlastEnv:
         }
         with open(path, "a") as f:
             f.write(json.dumps(record) + "\n")
+        self._log_unique_blocks(trays)
+
+    def _serialize_block(self, block):
+        block_arr = np.array(block, dtype=int)
+        rows = ["".join(str(int(cell)) for cell in row) for row in block_arr]
+        return f"{block_arr.shape[0]}x{block_arr.shape[1]}|" + "/".join(rows)
+
+    def _log_unique_blocks(self, trays, path="unique_blocks.txt"):
+        existing = set()
+        try:
+            with open(path, "r") as f:
+                for line in f:
+                    existing.add(line.strip())
+        except FileNotFoundError:
+            pass
+
+        new_lines = []
+        for tray in trays:
+            if tray is None:
+                continue
+            serialized = self._serialize_block(tray)
+            if serialized not in existing:
+                existing.add(serialized)
+                new_lines.append(serialized)
+
+        if new_lines:
+            with open(path, "a") as f:
+                for line in new_lines:
+                    f.write(line + "\n")
 
     def _encode_state(self):
         board = np.array(self.board, dtype=np.float32)
@@ -104,8 +133,9 @@ class BlockBlastEnv:
         pre_state = self._encode_state()
 
         if DEBUG:
-            debug(f"step: block shape")
-            status.print_block(block)
+            debug(f"step: tray")
+            status.print_all_trays(self.trays)
+        tray_screenshot = self.tray_screenshot    
 
         # If tray is empty, negative reward
         if block is None:
@@ -118,6 +148,8 @@ class BlockBlastEnv:
         prev_score = self.score
         prev_board = self.board.copy()
         prev_combo = self.in_combo
+
+        self.log_batch(self.board, self.trays)
 
         # If block not calibrated, raise exception
         class_name = f"{block.shape[0]}x{block.shape[1]}"
@@ -146,14 +178,15 @@ class BlockBlastEnv:
         # wait for background to stabilize before refreshing data if only one tray left that is not None
         if sum(1 for b in self.trays if b is not None) == 1:
             debug("step: batch resetting, waiting longer for stability")
-            time.sleep(0.35)
+            time.sleep(0.3)
         if self.lines_cleared_last_move > 0:
             debug("step: lines cleared, waiting longer for stability")
             time.sleep(0.5)
         if not invalid_move: 
+            reward += 5.0
             self.valid += 1
             debug("step: block placed, waiting until tray clears for stability")
-            time.sleep(0.35) # make sure read tray isn't messed up
+            time.sleep(0.3) # make sure read tray isn't messed up
         while not status.background_stable():
             time.sleep(0.05)
         debug("step: background stable, refreshing data")
@@ -163,15 +196,9 @@ class BlockBlastEnv:
         score_increase = np.abs(self.score - prev_score)
 
         standard_loss = play.check_loss(prev_board, block, col, row, self.trays, debug=DEBUG)
-        ad_loss = get_valid_move_mask(self.board, self.trays).sum() == 0
-        lost = standard_loss or ad_loss
 
-        if lost:
-            if standard_loss:
-                debug("step: loss detected with standard check, no valid moves left")
-            else:
-                debug("step: loss detected with ad, no valid moves left")
-                play.click_out_of_ad()
+        if standard_loss:
+            debug("step: loss detected with standard check, no valid moves left")
             debug(f"step: score increase before loss: {score_increase}")
             reward =  - 100.0
             done = True
@@ -184,16 +211,41 @@ class BlockBlastEnv:
             time.sleep(0.05)
             self.refresh_data()
             if time.time() - curr > 5.0:
-                debug("step: placement verification timeout!")
-                print("Expected board after placement:")
-                expected = play.expected_board_after_placement(col, row, block, prev_board)
-                status.print_board(expected)
-                print("Actual board after placement:")
-                status.print_board(self.board)
-                raise RuntimeError("Placement verification timeout")
+                if play.video_ad_detected(snapshot=status.screenshot()):
+                    debug("step: video ad detected during placement verification, clicking out of ad")
+                    play.click_out_of_ad()
+                    debug(f"step: score increase before loss: {score_increase}")
+                    reward =  - 100.0
+                    done = True
+                    debug(f"step: reward={reward} done={done} lines_cleared={self.lines_cleared_last_move}")
+                    return pre_state, reward, done, {}
+                else:
+                    debug("step: placement verification timeout!")
+                    print("Expected board after placement:")
+                    expected = play.expected_board_after_placement(col, row, block, prev_board)
+                    status.print_board(expected)
+                    print("Actual board after placement:")
+                    status.print_board(self.board)
+
+                    # Save tray screenshot for debugging
+                    tray_path = f"tray_debug_game{self.game}.png"
+                    status.save_screenshot(tray_screenshot, tray_path)
+                    debug(f"step: saved tray screenshot to {tray_path}")
+
+                    raise RuntimeError("Placement verification timeout")
+            
         debug("step: placed correctly")
 
-        
+        ad_loss = get_valid_move_mask(self.board, self.trays, debug_mask=DEBUG).sum() == 0
+        if ad_loss:
+            debug("step: ad loss detected with valid move mask, no valid moves left")
+            play.click_out_of_ad()
+            debug(f"step: score increase before loss: {score_increase}")
+            reward =  - 100.0
+            done = True
+            debug(f"step: reward={reward} done={done} lines_cleared={self.lines_cleared_last_move}")
+            return pre_state, reward, done, {}
+
         # increase or reset 'combo count' based on lines cleared and previous combo status
         if prev_combo:
             # if not in combo now, reset combo count
@@ -220,11 +272,12 @@ class BlockBlastEnv:
     def refresh_data(self):
         debug("refresh_data: screenshot")
         data = status.screenshot()
-        debug("refresh_data: board/trays/score/combo")
         self.board = status.get_board_state(data)
         self.trays = play.get_blocks(data)
         self.score = status.get_score(data)
         self.in_combo = status.is_in_combo(data)
+
+        self.tray_screenshot = status.get_trays_screenshot(data)
 
 
 # Need to include tray info and combo status and potentially moves since last line cleared for full state representation.
@@ -301,7 +354,7 @@ def main():
     optimizer = torch.optim.Adam(policy.parameters(), lr=1e-3)
     print("Starting training loop...")
     # Placeholder training loop structure.
-    for _ in range(50):
+    for _ in range(100):  # Number of episodes
         state = env.reset()
         done = False
         while not done:
@@ -324,7 +377,7 @@ def main():
             optimizer.step()
             state = next_state
 
-def get_valid_move_mask(board, trays):
+def get_valid_move_mask(board, trays, debug_mask=False):
     board_np = np.array(board)
     mask = torch.zeros((1, 3 * 8 * 8), dtype=torch.bool)
     for tray_index in range(3):
@@ -339,6 +392,18 @@ def get_valid_move_mask(board, trays):
                 if not play.invalid_placement(col, row, tray, board_np):
                     action_idx = tray_index * 64 + row * 8 + col
                     mask[0, action_idx] = True
+    if debug_mask and int(mask.sum().item()) == 0:
+        count = int(mask.sum().item())
+        debug(f"mask: valid actions={count}")
+        if count == 0:
+            debug("mask: no valid actions; trays:")
+            for i, tray in enumerate(trays):
+                if tray is None:
+                    debug(f"mask: tray {i}=None")
+                else:
+                    debug(f"mask: tray {i} shape={tray.shape}")
+                    if DEBUG:
+                        status.print_block(tray)
     return mask
 
 # Function to log current board state and trays to file to collect block tray generation data

@@ -143,6 +143,31 @@ def sample_tray(tray_tl, tray_br, snapshot=None):
 
     return block
 
+# Returns img screenshot of 3 trays side by side
+def get_trays_screenshot(snapshot=None):
+    snapshot = _get_snapshot() if snapshot is None else snapshot
+    tray_imgs = []
+    for tray_tl, tray_br in [(tray0_tl, tray0_br), (tray1_tl, tray1_br), (tray2_tl, tray2_br)]:
+        left, top = tray_tl['x'], tray_tl['y']
+        right, bottom = tray_br['x'], tray_br['y']
+        # Adjust for scaling
+        left, top = _scaled_point(left, top)
+        right, bottom = _scaled_point(right, bottom)
+
+        width = right - left
+        height = bottom - top
+        rel_x = left - snapshot["left"]
+        rel_y = top - snapshot["top"]
+        tray_img = snapshot["img"][rel_y:rel_y + height, rel_x:rel_x + width]
+        tray_imgs.append(tray_img)
+    # Concatenate trays horizontally
+    combined_img = np.hstack(tray_imgs)
+    return combined_img
+
+def save_screenshot(img, path="tray.png"):
+    im = Image.fromarray(img, mode="RGB")
+    im.save(path)
+
 def classify_tray(tray_index, snapshot=None):
     if tray_index == 0:
         tray_tl, tray_br = tray0_tl, tray0_br
@@ -169,6 +194,18 @@ def print_block(block):
         print("".join(['#' if cell else '.' for cell in row]))
     print()
 
+# prints all trays in horizontal format
+def print_all_trays(blocks):
+    max_height = max(block.shape[0] if block is not None else 0 for block in blocks)
+    for i in range(max_height):
+        row_str = ""
+        for block in blocks:
+            if block is None or i >= block.shape[0]:
+                row_str += " " * (block.shape[1] if block is not None else 4) + "  "
+            else:
+                row_str += "".join(['#' if cell else '.' for cell in block[i]]) + "  "
+        print(row_str)
+    print()
 
 
 # ---------- Combo status ----------

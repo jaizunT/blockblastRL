@@ -7,29 +7,13 @@ import numpy as np
 # Defines methods for placing blocks in BlockBlast game.
     
 def place_block(board, tray_index, grid_x, grid_y, block):
-    # if self.invalid_placement(grid_x, grid_y, block):
-    #     print(f"Invalid placement for tray {tray_index} at ({grid_x}, {grid_y})")
-    #     return False
-    
-    # previous_board = self.board
 
-    # Get lines cleared from action
     lines_cleared = get_lines_cleared(board, grid_x, grid_y, block)
     calibration.drag_piece(
         tray_index, grid_y, grid_x, class_name=f"{block.shape[0]}x{block.shape[1]}"
     )
     return lines_cleared
-    # if not self.refresh_status():
-    #     print("Loss detected after placement.")
-    #     return False
 
-    # if not self.placed_correctly(grid_x, grid_y, block, previous_board):
-    #     print(f"Block from tray {tray_index} not placed correctly at ({grid_x}, {grid_y})")
-    #     return False
-    
-    # print(f"Placed block from tray {tray_index} at ({grid_x}, {grid_y}) successfully")
-    # return True
-    # return lines cleared
     
 
 def invalid_placement(grid_x, grid_y, block, board):
@@ -120,15 +104,6 @@ def get_lines_cleared(board, grid_x, grid_y, block):
 
 # Checks internal board state with currently placed piece for loss condition if rest of pieces can't fit anywhere.
 def check_loss(board, block, grid_x, grid_y, blocks, debug=False):
-    # # Create a temporary board with the current block placed
-    # temp_board = board.copy()
-    # if block is None:
-    #     return False
-    # block_h, block_w = block.shape
-    # for i in range(block_h):
-    #     for j in range(block_w):
-    #         if block[i][j] == 1:
-    #             temp_board[grid_y + i][grid_x + j] = 1
 
     # If loss pixels different from bg pixels and loss pixels are similar and bg pixels are similar, then it's a loss
     loss_pixel1 = status.CALIBRATION["loss_pixel1"] 
@@ -148,29 +123,6 @@ def check_loss(board, block, grid_x, grid_y, blocks, debug=False):
     return False
 
 
-    
-    # Check if any of the remaining blocks can fit anywhere on the temp_board
-    if debug:
-        print("[loss] evaluating remaining blocks:")
-        for i, b in enumerate(blocks):
-            if b is None:
-                print(f"[loss] tray {i}: None")
-            else:
-                print(f"[loss] tray {i}: {b.shape}")
-    for b in blocks:
-        if b is block or b is None:
-            continue  # Skip the block that was just placed
-        b_h, b_w = b.shape
-        for y in range(8 - b_h + 1):
-            for x in range(8 - b_w + 1):
-                if not invalid_placement(x, y, b, temp_board):
-                    if debug:
-                        print(f"[loss] found valid placement for {b.shape} at ({y},{x})")
-                    return False  # Found a valid placement, not a loss
-    if debug:
-        print("[loss] no valid placements found")
-    return True  # No valid placements found, loss condition met
-
 # Click on correct position to start game
 def click_restart():
     restart_pixel = status.CALIBRATION["restart_pixel"]
@@ -183,7 +135,7 @@ def click_restart():
     status.pyautogui.click(restart_pixel['x'], restart_pixel['y'])
     
     print("Restart Button pressed")
-    time.sleep(1.6)  # Wait for game to start
+    time.sleep(2.0)  # Wait for game to start
 
 def click_out_of_ad():
     video_pixel1 = status.CALIBRATION["video_pixel1"]
@@ -216,6 +168,6 @@ def click_settings_replay():
 
     replay_pixel = status.CALIBRATION["replay_pixel"]
     status.pyautogui.click(replay_pixel['x'], replay_pixel['y'])
-    time.sleep(1.6)  # Wait for game to start
+    time.sleep(2.0)  # Wait for game to start
     
     
