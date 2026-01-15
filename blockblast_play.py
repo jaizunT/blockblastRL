@@ -175,17 +175,38 @@ def check_loss(board, block, grid_x, grid_y, blocks, debug=False):
 def click_restart():
     restart_pixel = status.CALIBRATION["restart_pixel"]
     restart_pixel_value = status.CALIBRATION["restart_pixel_value"]
-    # # Print all pixel values from (0, 0) to (1000, 1000) for debugging
-    # for y in range(0, 1000, 50):
-    #     for x in range(0, 1000, 50):
-    #         pixel_value = status.sample_pixel(x, y)
-    #         print(f"Pixel at ({x}, {y}): {pixel_value}")
+
+
     while status.sample_pixel(restart_pixel['x'], restart_pixel['y'], snapshot=status.screenshot()) != tuple(restart_pixel_value):
         time.sleep(0.05)
+
     status.pyautogui.click(restart_pixel['x'], restart_pixel['y'])
+    
     print("Restart Button pressed")
     time.sleep(1.6)  # Wait for game to start
 
+def click_out_of_ad():
+    video_pixel1 = status.CALIBRATION["video_pixel1"]
+    video_pixel2 = status.CALIBRATION["video_pixel2"]
+    video_pixel_value = status.CALIBRATION["video_pixel_value"]
+
+    no_thanks_pixel = status.CALIBRATION["no_thanks_pixel"]
+
+    while not (status.sample_pixel(video_pixel1['x'], video_pixel1['y'], snapshot=status.screenshot()) == tuple(video_pixel_value)
+            and status.sample_pixel(video_pixel2['x'], video_pixel2['y'], snapshot=status.screenshot()) == tuple(video_pixel_value)):
+            time.sleep(0.05)
+    status.pyautogui.click(no_thanks_pixel['x'], no_thanks_pixel['y'])
+    print("Dismissed video ad")
+
+def video_ad_detected(snapshot=None):
+    snapshot = status.screenshot() if snapshot is None else snapshot
+    video_pixel1 = status.CALIBRATION["video_pixel1"]
+    video_pixel2 = status.CALIBRATION["video_pixel2"]
+    video_pixel_value = tuple(status.CALIBRATION["video_pixel_value"])
+    return (
+        status.sample_pixel(video_pixel1['x'], video_pixel1['y'], snapshot=snapshot) == video_pixel_value
+        and status.sample_pixel(video_pixel2['x'], video_pixel2['y'], snapshot=snapshot) == video_pixel_value
+    )
 def click_settings_replay():
     focus_pixel = status.CALIBRATION["focus"]
     status.pyautogui.click(focus_pixel['x'], focus_pixel['y'])

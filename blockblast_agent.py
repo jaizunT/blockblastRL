@@ -1,3 +1,4 @@
+import json
 import random
 import time
 import numpy as np
@@ -51,6 +52,16 @@ class BlockBlastEnv:
         padded[:h, :w] = tray_arr
         return padded
 
+    def log_batch(self, board, trays, path="batch_log.jsonl"):
+        if any(tray is None for tray in trays):
+            return
+        record = {
+            "board": np.array(board, dtype=int).tolist(),
+            "trays": [self._pad_tray(tray).astype(int).tolist() for tray in trays],
+        }
+        with open(path, "a") as f:
+            f.write(json.dumps(record) + "\n")
+
     def _encode_state(self):
         board = np.array(self.board, dtype=np.float32)
         tray_tensors = [self._pad_tray(tray) for tray in self.trays]
@@ -78,8 +89,9 @@ class BlockBlastEnv:
         debug(f"Current game: {self.game}")
         debug(f"Current score: {self.score}")
         debug(f"Current combo: {self.in_combo}")
+        debug(f"Current combo count: {self.combo_count}")
 
-        debug(f"step: invalid/valid ratio: {self.invalid / self.valid}")
+        # debug(f"step: invalid/valid ratio: {self.invalid / self.valid}") # only if no masked actions
 
         tray_index, row, col = action
         reward = 0
@@ -90,6 +102,10 @@ class BlockBlastEnv:
 
         block = self.trays[tray_index]
         pre_state = self._encode_state()
+
+        if DEBUG:
+            debug(f"step: block shape")
+            status.print_block(block)
 
         # If tray is empty, negative reward
         if block is None:
@@ -133,32 +149,35 @@ class BlockBlastEnv:
             time.sleep(0.35)
         if self.lines_cleared_last_move > 0:
             debug("step: lines cleared, waiting longer for stability")
-            reward += 10.0 * self.lines_cleared_last_move
             time.sleep(0.5)
         if not invalid_move: 
             self.valid += 1
-            reward += 2.0
             debug("step: block placed, waiting until tray clears for stability")
-            time.sleep(0.3) # make sure read tray isn't messed up
+            time.sleep(0.35) # make sure read tray isn't messed up
         while not status.background_stable():
             time.sleep(0.05)
         debug("step: background stable, refreshing data")
         self.refresh_data()
         
-        if DEBUG:
-            debug(f"step: block shape")
-            status.print_block(block)
         
-        lost = play.check_loss(prev_board, block, col, row, self.trays, debug=DEBUG)
+        score_increase = np.abs(self.score - prev_score)
+
+        standard_loss = play.check_loss(prev_board, block, col, row, self.trays, debug=DEBUG)
+        ad_loss = get_valid_move_mask(self.board, self.trays).sum() == 0
+        lost = standard_loss or ad_loss
+
         if lost:
-            debug("step: loss detected, skipping placement verification")
-            score_increase = self.score - prev_score
+            if standard_loss:
+                debug("step: loss detected with standard check, no valid moves left")
+            else:
+                debug("step: loss detected with ad, no valid moves left")
+                play.click_out_of_ad()
             debug(f"step: score increase before loss: {score_increase}")
-            reward -= 100.0
-            reward += score_increase
+            reward =  - 100.0
             done = True
             debug(f"step: reward={reward} done={done} lines_cleared={self.lines_cleared_last_move}")
             return pre_state, reward, done, {}
+
         
         curr = time.time()
         while not play.placed_correctly(col, row, block, self.board, prev_board):
@@ -192,9 +211,8 @@ class BlockBlastEnv:
             else:
                 self.combo_count = 0
 
-        score_increase = self.score - prev_score
         debug(f"step: score increase: {score_increase}")
-        reward += score_increase
+        reward = score_increase + (self.lines_cleared_last_move * 10) + (self.combo_count * 5)
         done = False
         debug(f"step: reward={reward} done={done} lines_cleared={self.lines_cleared_last_move}")
         return self._encode_state(), reward, done, {}
@@ -283,7 +301,7 @@ def main():
     optimizer = torch.optim.Adam(policy.parameters(), lr=1e-3)
     print("Starting training loop...")
     # Placeholder training loop structure.
-    for _ in range(20):
+    for _ in range(50):
         state = env.reset()
         done = False
         while not done:
@@ -322,6 +340,10 @@ def get_valid_move_mask(board, trays):
                     action_idx = tray_index * 64 + row * 8 + col
                     mask[0, action_idx] = True
     return mask
+
+# Function to log current board state and trays to file to collect block tray generation data
+
+
 
 if __name__ == "__main__":
     main()

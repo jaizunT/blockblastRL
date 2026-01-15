@@ -192,8 +192,9 @@ def is_in_combo(snapshot=None):
     snapshot = _get_snapshot() if snapshot is None else snapshot
     sampled_pixel = sample_pixel(combo_pixel['x'], combo_pixel['y'], snapshot=snapshot)
     background_sampled = sample_pixel(bg_pixel['x'], bg_pixel['y'], snapshot=snapshot)
-    # If combo pixel differs from background pixel, we are in combo
-    return sampled_pixel != background_sampled
+    # If combo pixel differs from background pixel by threshold, we are in combo
+    if color_difference(sampled_pixel, background_sampled) > 10:
+        return True
 
 # ---------- Score status ----------
 
