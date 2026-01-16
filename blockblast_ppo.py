@@ -3,6 +3,7 @@ import gymnasium as gym
 from gymnasium import spaces
 
 from stable_baselines3 import PPO
+from stable_baselines3.common.callbacks import CheckpointCallback
 
 from blockblast_agent import BlockBlastEnv, TRAY_COUNT, TRAY_PAD_SIZE
 
@@ -50,10 +51,16 @@ class BlockBlastGymEnv(gym.Env):
         return obs, float(reward), bool(done), False, info
 
 
-def train_ppo(total_timesteps=10_000, model_path="ppo_blockblast.zip"):
+def train_ppo(
+    total_timesteps=10_000,
+    model_path="ppo_blockblast.zip",
+    save_freq=1_000,
+    save_dir="ppo_checkpoints",
+):
     env = BlockBlastGymEnv()
+    checkpoint_callback = CheckpointCallback(save_freq=save_freq, save_path=save_dir)
     model = PPO("MultiInputPolicy", env, verbose=1)
-    model.learn(total_timesteps=total_timesteps)
+    model.learn(total_timesteps=total_timesteps, callback=checkpoint_callback)
     model.save(model_path)
     return model
 

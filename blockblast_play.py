@@ -132,7 +132,9 @@ def click_restart():
     while status.sample_pixel(restart_pixel['x'], restart_pixel['y'], snapshot=status.screenshot()) != tuple(restart_pixel_value):
         time.sleep(0.05)
 
-    status.pyautogui.click(restart_pixel['x'], restart_pixel['y'])
+    for _ in range(5):
+        status.pyautogui.click(restart_pixel['x'], restart_pixel['y'])
+        time.sleep(0.05)
     
     print("Restart Button pressed")
     time.sleep(2.0)  # Wait for game to start

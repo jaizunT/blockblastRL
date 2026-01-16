@@ -164,6 +164,22 @@ def get_trays_screenshot(snapshot=None):
     combined_img = np.hstack(tray_imgs)
     return combined_img
 
+# Returns board screenshot img
+def get_board_screenshot(snapshot=None):
+    snapshot = _get_snapshot() if snapshot is None else snapshot
+    left, top = board_tl['x'], board_tl['y']
+    right, bottom = board_br['x'], board_br['y']
+    # Adjust for scaling
+    left, top = _scaled_point(left, top)
+    right, bottom = _scaled_point(right, bottom)
+
+    width = right - left
+    height = bottom - top
+    rel_x = left - snapshot["left"]
+    rel_y = top - snapshot["top"]
+    board_img = snapshot["img"][rel_y:rel_y + height, rel_x:rel_x + width]
+    return board_img
+
 def save_screenshot(img, path="tray.png"):
     im = Image.fromarray(img, mode="RGB")
     im.save(path)

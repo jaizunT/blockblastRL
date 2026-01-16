@@ -138,6 +138,7 @@ class BlockBlastEnv:
             debug(f"step: tray")
             status.print_all_trays(self.trays)
         tray_screenshot = self.tray_screenshot    
+        board_screenshot = self.board_screenshot
 
         # If tray is empty, negative reward
         if block is None:
@@ -226,9 +227,11 @@ class BlockBlastEnv:
                     status.print_board(self.board)
 
                     # Save tray screenshot for debugging
-                    tray_path = f"tray_debug_game{self.game}.png"
+                    tray_path = f"debug/tray_debug_game.png"
+                    board_path = f"debug/board_debug_game.png"
                     status.save_screenshot(tray_screenshot, tray_path)
-                    debug(f"step: saved tray screenshot to {tray_path}")
+                    status.save_screenshot(board_screenshot, board_path)
+                    debug(f"step: saved board and tray screenshots to {board_path} and {tray_path}")
 
                     raise RuntimeError("Placement verification timeout")
             
@@ -268,7 +271,7 @@ class BlockBlastEnv:
             + (self.combo_count * 0.5) 
             + (0.2 if not prev_combo and self.in_combo else 0.0)
             - (1.0 if prev_combo and self.combo_count == 0 else 0.0) 
-            + 0.1 * self.steps
+            + self.steps ** 0.5
             )
         done = False
         debug(f"step: reward={reward} done={done} lines_cleared={self.lines_cleared_last_move}")
@@ -283,6 +286,7 @@ class BlockBlastEnv:
         self.in_combo = status.is_in_combo(data)
 
         self.tray_screenshot = status.get_trays_screenshot(data)
+        self.board_screenshot = status.get_board_screenshot(data)
 
 
 # Need to include tray info and combo status and potentially moves since last line cleared for full state representation.
@@ -359,12 +363,12 @@ def main():
     optimizer = torch.optim.Adam(policy.parameters(), lr=1e-3)
 
     # Load existing weights if available
-    ckpt = torch.load("weights/policy_checkpoint1500.pt", map_location="cpu")
+    ckpt = torch.load("weights/policy_checkpoint4300.pt", map_location="cpu")
     policy.load_state_dict(ckpt["policy"])
     optimizer.load_state_dict(ckpt["optimizer"])
 
     save_every = 100
-    step_count = 1500
+    step_count = 4300
 
     print("Starting training loop...")
     # Placeholder training loop structure.
