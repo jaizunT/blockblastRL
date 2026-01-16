@@ -264,7 +264,7 @@ class BlockBlastEnv:
         debug(f"step: score increase: {score_increase}")
         reward = (
             score_increase / 1000.0
-            + (self.lines_cleared_last_move**2)
+            + (self.lines_cleared_last_move**1.5)
             + (self.combo_count * 0.5) 
             + (0.2 if not prev_combo and self.in_combo else 0.0)
             - (1.0 if prev_combo and self.combo_count == 0 else 0.0) 
@@ -363,7 +363,7 @@ def main():
     policy.load_state_dict(ckpt["policy"])
     optimizer.load_state_dict(ckpt["optimizer"])
 
-    save_every = 500
+    save_every = 100
     step_count = 1500
 
     print("Starting training loop...")
