@@ -363,12 +363,12 @@ def main():
     optimizer = torch.optim.Adam(policy.parameters(), lr=1e-3)
 
     # Load existing weights if available
-    ckpt = torch.load("weights/policy_checkpoint4300.pt", map_location="cpu")
+    ckpt = torch.load("weights/policy_checkpoint4800.pt", map_location="cpu")
     policy.load_state_dict(ckpt["policy"])
     optimizer.load_state_dict(ckpt["optimizer"])
 
     save_every = 100
-    step_count = 4300
+    step_count = 4800
 
     print("Starting training loop...")
     # Placeholder training loop structure.

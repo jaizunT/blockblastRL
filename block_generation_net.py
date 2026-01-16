@@ -74,6 +74,7 @@ def load_batches_with_tray_indices(batch_path="batch_log.jsonl", unique_path="un
                 tray_indices.append(idx)
             if has_unknown:
                 continue
+            tray_indices = sorted(tray_indices)
             batches.append(
                 {
                     "board": board,
