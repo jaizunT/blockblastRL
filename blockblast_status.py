@@ -281,7 +281,7 @@ cell_w = (br_x - tl_x) // 8
 cell_h = (br_y - tl_y) // 8
 
 CELL_PIXEL_BUFFER = 10  # Pixels away from center to sample top/bottom
-difference_threshold = 10
+difference_threshold = 5
 
 def get_board_state(snapshot=None):
     snapshot = _get_snapshot() if snapshot is None else snapshot

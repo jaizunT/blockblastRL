@@ -31,8 +31,7 @@ class BlockBlastEnv:
         self.refresh_data()
         self.game = 0
 
-        self.invalid = 1
-        self.valid = 1
+        self.steps = 0
 
         self.moves_since_last_clear = 0
         self.lines_cleared_last_move = 0
@@ -111,6 +110,7 @@ class BlockBlastEnv:
         self.moves_since_last_clear = 0
         self.lines_cleared_last_move = 0
         self.combo_count = 0
+        self.steps = 0
         self.game += 1
         return self._encode_state()
 
@@ -120,10 +120,12 @@ class BlockBlastEnv:
         debug(f"Current combo: {self.in_combo}")
         debug(f"Current combo count: {self.combo_count}")
 
-        # debug(f"step: invalid/valid ratio: {self.invalid / self.valid}") # only if no masked actions
 
         tray_index, row, col = action
         reward = 0
+
+        self.steps += 1
+
         # debug print board
         debug("step: current board")
         if DEBUG: status.print_board(self.board)
@@ -139,7 +141,6 @@ class BlockBlastEnv:
 
         # If tray is empty, negative reward
         if block is None:
-            self.invalid += 1
             debug("step: empty tray selected, invalid move")
             reward = -40.0
             done = False
@@ -163,7 +164,6 @@ class BlockBlastEnv:
         if invalid_move:
             debug("step: overlaps / out of bounds, invalid move")
             reward = -20.0
-            self.invalid += 1
             done = False
             return self._encode_state(), reward, done, {}
         
@@ -183,8 +183,6 @@ class BlockBlastEnv:
             debug("step: lines cleared, waiting longer for stability")
             time.sleep(0.5)
         if not invalid_move: 
-            reward += 5.0
-            self.valid += 1
             debug("step: block placed, waiting until tray clears for stability")
             time.sleep(0.3) # make sure read tray isn't messed up
         while not status.background_stable():
@@ -200,7 +198,7 @@ class BlockBlastEnv:
         if standard_loss:
             debug("step: loss detected with standard check, no valid moves left")
             debug(f"step: score increase before loss: {score_increase}")
-            reward =  - 100.0
+            reward =  - 10.0
             done = True
             debug(f"step: reward={reward} done={done} lines_cleared={self.lines_cleared_last_move}")
             return pre_state, reward, done, {}
@@ -215,7 +213,7 @@ class BlockBlastEnv:
                     debug("step: video ad detected during placement verification, clicking out of ad")
                     play.click_out_of_ad()
                     debug(f"step: score increase before loss: {score_increase}")
-                    reward =  - 100.0
+                    reward =  - 10.0
                     done = True
                     debug(f"step: reward={reward} done={done} lines_cleared={self.lines_cleared_last_move}")
                     return pre_state, reward, done, {}
@@ -241,7 +239,7 @@ class BlockBlastEnv:
             debug("step: ad loss detected with valid move mask, no valid moves left")
             play.click_out_of_ad()
             debug(f"step: score increase before loss: {score_increase}")
-            reward =  - 100.0
+            reward =  - 10.0
             done = True
             debug(f"step: reward={reward} done={done} lines_cleared={self.lines_cleared_last_move}")
             return pre_state, reward, done, {}
@@ -264,7 +262,14 @@ class BlockBlastEnv:
                 self.combo_count = 0
 
         debug(f"step: score increase: {score_increase}")
-        reward = score_increase + (self.lines_cleared_last_move * 10) + (self.combo_count * 5)
+        reward = (
+            score_increase / 1000.0
+            + (self.lines_cleared_last_move**2)
+            + (self.combo_count * 0.5) 
+            + (0.2 if not prev_combo and self.in_combo else 0.0)
+            - (1.0 if prev_combo and self.combo_count == 0 else 0.0) 
+            + 0.1 * self.steps
+            )
         done = False
         debug(f"step: reward={reward} done={done} lines_cleared={self.lines_cleared_last_move}")
         return self._encode_state(), reward, done, {}
@@ -352,9 +357,18 @@ def main():
     action_dim = 3 * 8 * 8
     policy = PolicyNet(action_dim)
     optimizer = torch.optim.Adam(policy.parameters(), lr=1e-3)
+
+    # Load existing weights if available
+    ckpt = torch.load("weights/policy_checkpoint1500.pt", map_location="cpu")
+    policy.load_state_dict(ckpt["policy"])
+    optimizer.load_state_dict(ckpt["optimizer"])
+
+    save_every = 500
+    step_count = 1500
+
     print("Starting training loop...")
     # Placeholder training loop structure.
-    for _ in range(100):  # Number of episodes
+    for _ in range(200):  # Number of episodes
         state = env.reset()
         done = False
         while not done:
@@ -375,6 +389,14 @@ def main():
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+
+            step_count += 1
+            if step_count % save_every == 0:
+                torch.save(
+                    {"policy": policy.state_dict(), "optimizer": optimizer.state_dict()},
+                    f"weights/policy_checkpoint{step_count}.pt",
+                )
+
             state = next_state
 
 def get_valid_move_mask(board, trays, debug_mask=False):
@@ -405,8 +427,6 @@ def get_valid_move_mask(board, trays, debug_mask=False):
                     if DEBUG:
                         status.print_block(tray)
     return mask
-
-# Function to log current board state and trays to file to collect block tray generation data
 
 
 
