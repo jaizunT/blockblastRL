@@ -1,5 +1,7 @@
 import time
 import random
+from collections import deque
+
 import blockblast_status as status
 import blockblast_calibration as calibration
 import numpy as np
@@ -102,6 +104,47 @@ def get_lines_cleared(board, grid_x, grid_y, block):
     cols_cleared = [c for c in range(8) if all(temp_board[r][c] != 0 for r in range(8))]
     return len(rows_cleared) + len(cols_cleared)
 
+
+def calculate_clutter(board):
+    board_arr = np.array(board)
+    total = board_arr.size
+    filled = int(np.count_nonzero(board_arr))
+    return filled / total if total else 0.0
+
+
+def calculate_holes(board):
+    board_arr = np.array(board)
+    rows, cols = board_arr.shape
+    empty = (board_arr == 0)
+    seen = np.zeros_like(empty, dtype=bool)
+    queue = deque()
+
+    # Seed BFS from empty edge cells.
+    for c in range(cols):
+        if empty[0, c]:
+            seen[0, c] = True
+            queue.append((0, c))
+        if empty[rows - 1, c]:
+            seen[rows - 1, c] = True
+            queue.append((rows - 1, c))
+    for r in range(rows):
+        if empty[r, 0]:
+            seen[r, 0] = True
+            queue.append((r, 0))
+        if empty[r, cols - 1]:
+            seen[r, cols - 1] = True
+            queue.append((r, cols - 1))
+
+    while queue:
+        r, c = queue.popleft()
+        for dr, dc in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            nr, nc = r + dr, c + dc
+            if 0 <= nr < rows and 0 <= nc < cols and empty[nr, nc] and not seen[nr, nc]:
+                seen[nr, nc] = True
+                queue.append((nr, nc))
+
+    return int(np.sum(empty & ~seen))
+
 # Checks internal board state with currently placed piece for loss condition if rest of pieces can't fit anywhere.
 def check_loss(board, block, grid_x, grid_y, blocks, debug=False):
 
@@ -128,16 +171,18 @@ def click_restart():
     restart_pixel = status.CALIBRATION["restart_pixel"]
     restart_pixel_value = status.CALIBRATION["restart_pixel_value"]
 
-
+    curr = time.time()
     while status.sample_pixel(restart_pixel['x'], restart_pixel['y'], snapshot=status.screenshot()) != tuple(restart_pixel_value):
         time.sleep(0.05)
+        if time.time() - curr > 5.0: # Timeout after 5 seconds, click anyway
+            break
 
-    for _ in range(5):
+    for _ in range(3):
         status.pyautogui.click(restart_pixel['x'], restart_pixel['y'])
         time.sleep(0.05)
     
     print("Restart Button pressed")
-    time.sleep(2.0)  # Wait for game to start
+    time.sleep(1.8)  # Wait for game to start
 
 def click_out_of_ad():
     video_pixel1 = status.CALIBRATION["video_pixel1"]

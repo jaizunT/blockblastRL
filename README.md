@@ -55,6 +55,22 @@ python blockblast_calibration.py place <tray_index 0-2> <row 0-7> <col 0-7> [--c
 Example
 python blockblast_calibration.py place 0 3 4
 
+PPO Training (SB3)
+- Wrapper lives in `blockblast_ppo.py` (Gymnasium + SB3).
+- Optional action masking (requires sb3-contrib):
+  python -m pip install sb3-contrib
+- Run PPO without masking:
+  python blockblast_ppo.py --timesteps 10000
+- Run PPO with masking:
+  python blockblast_ppo.py --timesteps 10000 --masking
+- Resume PPO from a checkpoint step (loads `ppo_checkpoints/rl_model_<step>_steps.zip`):
+  python blockblast_ppo.py --masking --resume-step 10000
+- Checkpoints are saved to `ppo_checkpoints/`.
+
+RL Agent (custom loop)
+- The baseline policy loop is in `blockblast_agent.py`.
+- It supports action masking with `get_valid_move_mask`.
+
 Status Processing (blockblast_status.py)
 - Shared scaling: coordinates from calibration.json (pyautogui-space) are scaled to the mss capture size.
 - Tray classification:
@@ -71,6 +87,18 @@ Status Processing (blockblast_status.py)
 - Board state:
   - Use `board_box` to compute 8x8 cell centers.
   - Compare center pixel vs a lower pixel in the same cell to mark occupancy.
+
+Data Pipeline (batch_log.jsonl + unique_blocks.txt)
+- `BlockBlastEnv.log_batch` appends one JSON record per line to `batch_log.jsonl`:
+  - `board`: 8x8 grid
+  - `trays`: 3x5x5 padded tray masks
+- `unique_blocks.txt` stores unique raw tray shapes as `HxW|row/row/...`.
+- `block_generation_net.py` includes helpers to:
+  - load batches and map trays to unique block IDs
+  - skip unknown shapes
+  - train/test/val split and accuracy metrics
+- The block generation model outputs 3 class IDs (one per tray), treated as a set
+  using permutation-invariant loss.
 
 Notes
 - The script uses drag-and-drop from the tray pickup point to the target cell center.

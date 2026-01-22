@@ -1,3 +1,4 @@
+import argparse
 import json
 import numpy as np
 import torch as torch
@@ -9,6 +10,7 @@ class BlockGenerationNet(nn.Module):
     def __init__(self, num_blocks, hidden_size=128):
         super(BlockGenerationNet, self).__init__()
         self.num_blocks = num_blocks
+        self.start_token = num_blocks
         self.conv = nn.Sequential(
             nn.Conv2d(1, 16, kernel_size=3, padding=1),
             nn.ReLU(),
@@ -16,15 +18,36 @@ class BlockGenerationNet(nn.Module):
             nn.ReLU(),
         )
         self.fc1 = nn.Linear(32 * 8 * 8, hidden_size)
-        self.fc2 = nn.Linear(hidden_size, 3 * num_blocks)
+        self.init_h = nn.Linear(hidden_size, hidden_size)
+        self.block_embed = nn.Embedding(num_blocks + 1, hidden_size)
+        self.rnn = nn.GRUCell(hidden_size, hidden_size)
+        self.out = nn.Linear(hidden_size, num_blocks)
 
-    def forward(self, x):
+    def forward(self, x, targets=None):
         x = x.view(-1, 1, 8, 8)
         x = self.conv(x)
         x = x.view(x.size(0), -1)
         x = F.relu(self.fc1(x))
-        logits = self.fc2(x)
-        return logits.view(-1, 3, self.num_blocks)
+        h = self.init_h(x)
+
+        batch_size = x.size(0)
+        prev_token = torch.full(
+            (batch_size,),
+            self.start_token,
+            dtype=torch.long,
+            device=x.device,
+        )
+        logits_steps = []
+        for step in range(3):
+            emb = self.block_embed(prev_token)
+            h = self.rnn(emb, h)
+            logits = self.out(h)
+            logits_steps.append(logits)
+            if targets is not None:
+                prev_token = targets[:, step]
+            else:
+                prev_token = torch.argmax(logits, dim=-1)
+        return torch.stack(logits_steps, dim=1)
     
 
 # Grabs board and trays from batch.jsonl and maps the trays to index format based on unique_blocks.txt
@@ -90,7 +113,7 @@ def load_num_blocks(unique_path="unique_blocks.txt"):
         return sum(1 for line in f if line.strip())
 
 
-def _evaluate_split(model, batches, device="cpu"):
+def _evaluate_split(model, batches, device="cpu", set_eval=False):
     model.eval()
     total = 0
     correct_per_tray = np.zeros(3, dtype=int)
@@ -101,15 +124,26 @@ def _evaluate_split(model, batches, device="cpu"):
             targets = batch["tray_indices"]
             if any(t is None for t in targets):
                 continue
+            if set_eval:
+                targets = sorted(targets)
             targets = torch.tensor(targets, dtype=torch.long, device=device)
-            logits = model(board)[0]
+            logits = model(board, targets=targets.unsqueeze(0))[0]
             preds = torch.argmax(logits, dim=1)
             total += 1
-            for i in range(3):
-                if preds[i].item() == targets[i].item():
-                    correct_per_tray[i] += 1
-            if torch.all(preds == targets):
-                exact_match += 1
+            if set_eval:
+                preds_sorted, _ = torch.sort(preds)
+                targets_sorted, _ = torch.sort(targets)
+                for i in range(3):
+                    if preds_sorted[i].item() == targets_sorted[i].item():
+                        correct_per_tray[i] += 1
+                if torch.all(preds_sorted == targets_sorted):
+                    exact_match += 1
+            else:
+                for i in range(3):
+                    if preds[i].item() == targets[i].item():
+                        correct_per_tray[i] += 1
+                if torch.all(preds == targets):
+                    exact_match += 1
     if total == 0:
         return {"count": 0, "tray_acc": [0.0, 0.0, 0.0], "exact_acc": 0.0}
     tray_acc = (correct_per_tray / total).tolist()
@@ -125,6 +159,7 @@ def train_block_generation(
     device="cpu",
     split=(0.8, 0.1, 0.1),
     seed=42,
+    set_eval=False,
 ):
     batches = load_batches_with_tray_indices(batch_path, unique_path)
     if not batches:
@@ -151,8 +186,11 @@ def train_block_generation(
         total_loss = 0.0
         for batch in train_batches:
             board = torch.tensor(batch["board"], dtype=torch.float32, device=device).unsqueeze(0)
-            targets = torch.tensor(batch["tray_indices"], dtype=torch.long, device=device)
-            logits = model(board)
+            targets_list = batch["tray_indices"]
+            if set_eval:
+                targets_list = sorted(targets_list)
+            targets = torch.tensor(targets_list, dtype=torch.long, device=device)
+            logits = model(board, targets=targets.unsqueeze(0))
             loss = 0.0
             for tray_idx in range(3):
                 loss = loss + criterion(
@@ -165,7 +203,11 @@ def train_block_generation(
             optimizer.step()
             total_loss += float(loss.item())
 
-        val_metrics = _evaluate_split(model, val_batches, device=device) if val_batches else None
+        val_metrics = (
+            _evaluate_split(model, val_batches, device=device, set_eval=set_eval)
+            if val_batches
+            else None
+        )
         if val_metrics:
             print(
                 f"Epoch {epoch + 1}/{epochs} loss={total_loss:.4f} "
@@ -175,7 +217,11 @@ def train_block_generation(
         else:
             print(f"Epoch {epoch + 1}/{epochs} loss={total_loss:.4f}")
 
-    test_metrics = _evaluate_split(model, test_batches, device=device) if test_batches else None
+    test_metrics = (
+        _evaluate_split(model, test_batches, device=device, set_eval=set_eval)
+        if test_batches
+        else None
+    )
     if test_metrics:
         print(
             f"Test exact={test_metrics['exact_acc']:.3f} "
@@ -186,12 +232,20 @@ def train_block_generation(
 
 def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--batch-path", default="batch_log.jsonl")
+    parser.add_argument("--unique-path", default="unique_blocks.txt")
+    parser.add_argument("--epochs", type=int, default=10)
+    parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument("--set-eval", action="store_true")
+    args = parser.parse_args()
     model = train_block_generation(
-        batch_path="batch_log.jsonl",
-        unique_path="unique_blocks.txt",
-        epochs=10,
-        lr=1e-3,
+        batch_path=args.batch_path,
+        unique_path=args.unique_path,
+        epochs=args.epochs,
+        lr=args.lr,
         device=device,
+        set_eval=args.set_eval,
     )
     torch.save(model.state_dict(), "block_generation/block_generation_model.pth")
 

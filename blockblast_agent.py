@@ -96,7 +96,9 @@ class BlockBlastEnv:
         moves = float(self.moves_since_last_clear)
         lines = float(self.lines_cleared_last_move)
         combo = float(self.combo_count)
-        return board, tray_tensors, moves, lines, combo
+        clutter = float(play.calculate_clutter(self.board))
+        holes = float(play.calculate_holes(self.board))
+        return board, tray_tensors, moves, lines, combo, clutter, holes
 
     def reset(self):
         debug("reset: clicking restart")
@@ -115,11 +117,15 @@ class BlockBlastEnv:
         return self._encode_state()
 
     def step(self, action):
+        debug(f"Current step: {self.steps}")
         debug(f"Current game: {self.game}")
         debug(f"Current score: {self.score}")
         debug(f"Current combo: {self.in_combo}")
         debug(f"Current combo count: {self.combo_count}")
-
+        debug(f"Current clutter: {self.clutter}")
+        debug(f"Current holes: {self.holes}")
+        debug(f"Current moves since last clear: {self.moves_since_last_clear}")
+        debug(f"Current lines cleared last move: {self.lines_cleared_last_move}")
 
         tray_index, row, col = action
         reward = 0
@@ -140,26 +146,24 @@ class BlockBlastEnv:
         tray_screenshot = self.tray_screenshot    
         board_screenshot = self.board_screenshot
 
-        # If tray is empty, negative reward
-        if block is None:
-            debug("step: empty tray selected, invalid move")
-            reward = -40.0
-            done = False
-            return self._encode_state(), reward, done, {}
         
         prev_score = self.score
         prev_board = self.board.copy()
         prev_combo = self.in_combo
+        prev_holes = self.holes if self.holes is not None else 0.0
+        prev_clutter = self.clutter if self.clutter is not None else 0.0
 
         self.log_batch(self.board, self.trays)
 
         # If block not calibrated, raise exception
         class_name = f"{block.shape[0]}x{block.shape[1]}"
         if not auto.is_class_calibrated(class_name, tray_index):
-            debug(f"step: block not calibrated for tray {tray_index} class {class_name}")
+            debug(f"step: block not recognized for tray {tray_index} class {class_name}")
             status.print_block(block)
-            raise Exception("Block not calibrated, please run auto-calibration script.")
-        
+            debug(f"step: restarting game")
+            play.click_settings_replay()
+            return self._encode_state(), 0, True, {}
+                
         invalid_move = play.invalid_placement(col, row, block, self.board)
 
         if invalid_move:
@@ -168,12 +172,8 @@ class BlockBlastEnv:
             done = False
             return self._encode_state(), reward, done, {}
         
-        # time.sleep(0.5) # brief pause before placement
-
         debug("step: placing block")
         self.lines_cleared_last_move = play.place_block(self.board, tray_index, col, row, block)
-        
-        # increase or reset 'moves since last clear' based on lines cleared
         self.moves_since_last_clear = 0 if self.lines_cleared_last_move > 0 else self.moves_since_last_clear + 1
 
         # wait for background to stabilize before refreshing data if only one tray left that is not None
@@ -189,19 +189,40 @@ class BlockBlastEnv:
         while not status.background_stable():
             time.sleep(0.05)
         debug("step: background stable, refreshing data")
-        self.refresh_data()
-        
+
+        while True:
+            try:
+                self.refresh_data()
+                break
+            except Exception:
+                time.sleep(0.05)
+
+        # refresh while entire tray is empty
+        # if still empty after 5 seconds, error
+        curr = time.time()
+        while True:
+            if time.time() - curr > 5.0:
+                debug("step: tray refresh timeout!")
+                debug("step: restarting game to recover from tray refresh timeout")
+                play.click_settings_replay()
+                return pre_state, 0, True, {}
+
+            if all(tray is None for tray in self.trays):
+                debug("step: all trays empty, refreshing data again for stability")
+                time.sleep(0.1)
+                self.refresh_data()
+            else:
+                break
         
         score_increase = np.abs(self.score - prev_score)
 
         standard_loss = play.check_loss(prev_board, block, col, row, self.trays, debug=DEBUG)
-
         if standard_loss:
             debug("step: loss detected with standard check, no valid moves left")
             debug(f"step: score increase before loss: {score_increase}")
-            reward =  - 10.0
+            reward =  - 15.0
             done = True
-            debug(f"step: reward={reward} done={done} lines_cleared={self.lines_cleared_last_move}")
+            debug(f"step: reward={reward} done={done}")
             return pre_state, reward, done, {}
 
         
@@ -214,9 +235,9 @@ class BlockBlastEnv:
                     debug("step: video ad detected during placement verification, clicking out of ad")
                     play.click_out_of_ad()
                     debug(f"step: score increase before loss: {score_increase}")
-                    reward =  - 10.0
+                    reward =  - 15.0
                     done = True
-                    debug(f"step: reward={reward} done={done} lines_cleared={self.lines_cleared_last_move}")
+                    debug(f"step: reward={reward} done={done}")
                     return pre_state, reward, done, {}
                 else:
                     debug("step: placement verification timeout!")
@@ -233,7 +254,11 @@ class BlockBlastEnv:
                     status.save_screenshot(board_screenshot, board_path)
                     debug(f"step: saved board and tray screenshots to {board_path} and {tray_path}")
 
-                    raise RuntimeError("Placement verification timeout")
+                    # Restarting the game to recover
+                    debug("step: restarting game to recover from placement error")
+                    play.click_settings_replay()
+                    self.start = True
+                    return pre_state, 0, True, {}
             
         debug("step: placed correctly")
 
@@ -242,9 +267,9 @@ class BlockBlastEnv:
             debug("step: ad loss detected with valid move mask, no valid moves left")
             play.click_out_of_ad()
             debug(f"step: score increase before loss: {score_increase}")
-            reward =  - 10.0
+            reward =  - 15.0
             done = True
-            debug(f"step: reward={reward} done={done} lines_cleared={self.lines_cleared_last_move}")
+            debug(f"step: reward={reward} done={done}")
             return pre_state, reward, done, {}
 
         # increase or reset 'combo count' based on lines cleared and previous combo status
@@ -265,16 +290,25 @@ class BlockBlastEnv:
                 self.combo_count = 0
 
         debug(f"step: score increase: {score_increase}")
+        delta_holes = prev_holes - self.holes
+        if self.clutter > 0.65 and prev_clutter <= 0.65:
+            debug("step: clutter crossed high threshold, applying penalty")
+            clutter_score = -0.5
+        else:
+            clutter_score = 0.0
+
         reward = (
             score_increase / 1000.0
             + (self.lines_cleared_last_move**1.5)
             + (self.combo_count * 0.5) 
             + (0.2 if not prev_combo and self.in_combo else 0.0)
             - (1.0 if prev_combo and self.combo_count == 0 else 0.0) 
-            + self.steps ** 0.5
-            )
+            + 0.1 * (self.steps ** 0.5)
+            - (clutter_score)
+            + (delta_holes * 0.2)
+        )
         done = False
-        debug(f"step: reward={reward} done={done} lines_cleared={self.lines_cleared_last_move}")
+        debug(f"step: reward={reward} done={done}")
         return self._encode_state(), reward, done, {}
     
     def refresh_data(self):
@@ -284,28 +318,39 @@ class BlockBlastEnv:
         self.trays = play.get_blocks(data)
         self.score = status.get_score(data)
         self.in_combo = status.is_in_combo(data)
+        self.clutter = play.calculate_clutter(self.board)
+        self.holes = play.calculate_holes(self.board)
 
         self.tray_screenshot = status.get_trays_screenshot(data)
         self.board_screenshot = status.get_board_screenshot(data)
 
 
-# Need to include tray info and combo status and potentially moves since last line cleared for full state representation.
-# Possibly include Lines cleared last move
+
 class PolicyNet(nn.Module):
     def __init__(self, action_dim):
         super().__init__()
-        input_dim = (BOARD_SIZE * BOARD_SIZE) + (TRAY_COUNT * TRAY_PAD_SIZE * TRAY_PAD_SIZE) + 3
+        input_dim = (BOARD_SIZE * BOARD_SIZE) + (TRAY_COUNT * TRAY_PAD_SIZE * TRAY_PAD_SIZE) + 5
         self.net = nn.Sequential(
             nn.Linear(input_dim, 128),
             nn.ReLU(),
             nn.Linear(128, action_dim),
         )
 
-    def forward(self, board_tensor, tray_tensors, moves_since_last_clear, lines_cleared_last_move, combo_count):
+    def forward(
+        self,
+        board_tensor,
+        tray_tensors,
+        moves_since_last_clear,
+        lines_cleared_last_move,
+        combo_count,
+        clutter,
+        holes,
+    ):
         board_flat = board_tensor.flatten(start_dim=1)
         trays_flat = tray_tensors.flatten(start_dim=1)
         scalars = torch.stack(
-            [moves_since_last_clear, lines_cleared_last_move, combo_count], dim=1
+            [moves_since_last_clear, lines_cleared_last_move, combo_count, clutter, holes],
+            dim=1,
         )
         features = torch.cat([board_flat, trays_flat, scalars], dim=1)
         return self.net(features)
@@ -376,14 +421,22 @@ def main():
         state = env.reset()
         done = False
         while not done:
-            board, trays, moves, lines, combo = state
+            board, trays, moves, lines, combo, clutter, holes = state
             board_tensor = torch.tensor(board, dtype=torch.float32).unsqueeze(0)
             trays_tensor = torch.tensor(np.stack(trays), dtype=torch.float32).unsqueeze(0)
             moves_tensor = torch.tensor([moves], dtype=torch.float32)
             lines_tensor = torch.tensor([lines], dtype=torch.float32)
             combo_tensor = torch.tensor([combo], dtype=torch.float32)
+            clutter_tensor = torch.tensor([clutter], dtype=torch.float32)
+            holes_tensor = torch.tensor([holes], dtype=torch.float32)
             logits = policy(
-                board_tensor, trays_tensor, moves_tensor, lines_tensor, combo_tensor
+                board_tensor,
+                trays_tensor,
+                moves_tensor,
+                lines_tensor,
+                combo_tensor,
+                clutter_tensor,
+                holes_tensor,
             )
             valid_move_mask = get_valid_move_mask(env.board, env.trays)
             action_idx, logp = sample_action(logits, mask=valid_move_mask)
