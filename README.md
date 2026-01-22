@@ -63,9 +63,17 @@ PPO Training (SB3)
   python blockblast_ppo.py --timesteps 10000
 - Run PPO with masking:
   python blockblast_ppo.py --timesteps 10000 --masking
+- Run PPO with the simulated environment:
+  python blockblast_ppo.py --sim
+- Run PPO with the simulator and action masking:
+  python blockblast_ppo.py --sim --masking --num-envs 4
+- Resume masked PPO at a checkpoint using the simulator:
+  python blockblast_ppo.py --sim --masking --resume-step 10000
 - Resume PPO from a checkpoint step (loads `ppo_checkpoints/rl_model_<step>_steps.zip`):
   python blockblast_ppo.py --masking --resume-step 10000
 - Checkpoints are saved to `ppo_checkpoints/`.
+- PPO hyperparameters are shared between live and sim runs (gamma/gae_lambda/n_steps).
+- `--num-envs` controls the number of parallel simulator instances (default 4).
 
 RL Agent (custom loop)
 - The baseline policy loop is in `blockblast_agent.py`.
@@ -97,8 +105,16 @@ Data Pipeline (batch_log.jsonl + unique_blocks.txt)
   - load batches and map trays to unique block IDs
   - skip unknown shapes
   - train/test/val split and accuracy metrics
-- The block generation model outputs 3 class IDs (one per tray), treated as a set
-  using permutation-invariant loss.
+- The block generation model outputs 3 class IDs (one per tray).
+- Use `--set-eval` to train/evaluate with set-invariant targets (sorted).
+- Weights are saved to `block_generator/block_generation_model.pth`.
+
+Simulation (blockblast_simulation.py)
+- `BlockBlastSim` simulates the 8x8 grid and regenerates batches after 3 placements.
+- Batches are sampled from the block generator weights and re-rolled until solvable.
+- Combo logic is line-based: clearing within 3 moves increments a line streak; combo
+  starts once the streak reaches 3 lines.
+- Scoring is a placeholder (currently returns 0 per move).
 
 Notes
 - The script uses drag-and-drop from the tray pickup point to the target cell center.

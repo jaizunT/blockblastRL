@@ -5,8 +5,10 @@ from gymnasium import spaces
 
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import CheckpointCallback
+from stable_baselines3.common.env_util import make_vec_env
 
 from blockblast_agent import BlockBlastEnv, TRAY_COUNT, TRAY_PAD_SIZE, get_valid_move_mask
+from blockblast_simulation import BlockBlastSim, valid_placement
 
 
 class BlockBlastGymEnv(gym.Env):
@@ -60,6 +62,75 @@ class BlockBlastGymEnv(gym.Env):
         return mask.squeeze(0).cpu().numpy().astype(bool)
 
 
+class BlockBlastSimGymEnv(gym.Env):
+    def __init__(self):
+        super().__init__()
+        self.env = BlockBlastSim()
+        self.action_space = spaces.Discrete(3 * 8 * 8)
+        self.observation_space = spaces.Dict(
+            {
+                "board": spaces.Box(0, 1, shape=(8, 8), dtype=np.float32),
+                "trays": spaces.Box(
+                    0, 1, shape=(TRAY_COUNT, TRAY_PAD_SIZE, TRAY_PAD_SIZE), dtype=np.float32
+                ),
+                "moves": spaces.Box(0, 1000, shape=(1,), dtype=np.float32),
+                "lines": spaces.Box(0, 8, shape=(1,), dtype=np.float32),
+                "combo": spaces.Box(0, 1000, shape=(1,), dtype=np.float32),
+                "clutter": spaces.Box(0, 1, shape=(1,), dtype=np.float32),
+                "holes": spaces.Box(0, 64, shape=(1,), dtype=np.float32),
+            }
+        )
+
+    def _pad_tray(self, tray, size=TRAY_PAD_SIZE):
+        tray_arr = np.array(tray, dtype=np.float32)
+        h, w = tray_arr.shape
+        padded = np.zeros((size, size), dtype=np.float32)
+        if h > size or w > size:
+            tray_arr = tray_arr[:size, :size]
+            h, w = tray_arr.shape
+        padded[:h, :w] = tray_arr
+        return padded
+
+    def _pack_obs(self, state):
+        trays = np.stack([self._pad_tray(tray) for tray in state["batch"]]).astype(np.float32)
+        return {
+            "board": state["board"].astype(np.float32),
+            "trays": trays,
+            "moves": np.array([state["moves_since_last_clear"]], dtype=np.float32),
+            "lines": np.array([state["lines_cleared_last_move"]], dtype=np.float32),
+            "combo": np.array([state["combo_count"]], dtype=np.float32),
+            "clutter": np.array([state["clutter"]], dtype=np.float32),
+            "holes": np.array([state["holes"]], dtype=np.float32),
+        }
+
+    def reset(self, *, seed=None, options=None):
+        super().reset(seed=seed)
+        state = self.env.reset()
+        return self._pack_obs(state), {}
+
+    def step(self, action):
+        tray = action // 64
+        rem = action % 64
+        row = rem // 8
+        col = rem % 8
+        result = self.env.step((tray, row, col))
+        obs = self._pack_obs(self.env._get_state())
+        return obs, float(result.reward), bool(result.done), False, result.info
+
+    def action_masks(self):
+        mask = np.zeros(3 * 8 * 8, dtype=bool)
+        for tray_index, block in enumerate(self.env.batch):
+            if self.env.batch_used[tray_index]:
+                continue
+            block_h, block_w = block.shape
+            for row in range(8 - block_h + 1):
+                for col in range(8 - block_w + 1):
+                    if valid_placement(self.env.board, block, row, col):
+                        action_idx = tray_index * 64 + row * 8 + col
+                        mask[action_idx] = True
+        return mask
+
+
 def train_ppo(
     total_timesteps=10_000,
     model_path="ppo_blockblast.zip",
@@ -67,8 +138,12 @@ def train_ppo(
     save_dir="ppo_checkpoints",
     use_masking=False,
     resume_step=None,
+    use_sim=False,
+    num_envs=1,
 ):
-    env = BlockBlastGymEnv()
+    env = None
+    wrapper_class = None
+    wrapper_kwargs = None
     resume_path = None
     if resume_step is not None:
         resume_path = f"{save_dir}/rl_model_{resume_step}_steps.zip"
@@ -81,7 +156,20 @@ def train_ppo(
             raise ImportError(
                 "Masking requires sb3-contrib. Install with: pip install sb3-contrib"
             ) from exc
-        env = ActionMasker(env, lambda e: e.action_masks())
+        wrapper_class = ActionMasker
+        wrapper_kwargs = {"action_mask_fn": "action_masks"}
+    if use_sim:
+        env = make_vec_env(
+            BlockBlastSimGymEnv,
+            n_envs=num_envs,
+            wrapper_class=wrapper_class,
+            wrapper_kwargs=wrapper_kwargs,
+        )
+    else:
+        env = BlockBlastGymEnv()
+        if wrapper_class is not None:
+            env = wrapper_class(env, **wrapper_kwargs)
+    if use_masking:
         if resume_path:
             model = MaskablePPO.load(resume_path, env=env)
         else:
@@ -122,6 +210,8 @@ if __name__ == "__main__":
     parser.add_argument("--model-path", default="ppo_blockblast.zip")
     parser.add_argument("--masking", action="store_true")
     parser.add_argument("--resume-step", type=int, default=None)
+    parser.add_argument("--sim", action="store_true")
+    parser.add_argument("--num-envs", type=int, default=4)
     args = parser.parse_args()
     train_ppo(
         total_timesteps=args.timesteps,
@@ -130,4 +220,6 @@ if __name__ == "__main__":
         save_dir=args.save_dir,
         use_masking=args.masking,
         resume_step=args.resume_step,
+        use_sim=args.sim,
+        num_envs=args.num_envs,
     )

@@ -247,7 +247,7 @@ def main():
         device=device,
         set_eval=args.set_eval,
     )
-    torch.save(model.state_dict(), "block_generation/block_generation_model.pth")
+    torch.save(model.state_dict(), "block_generator/block_generation_model.pth")
 
 if __name__ == "__main__":
     main()

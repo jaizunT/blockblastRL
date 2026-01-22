@@ -10,6 +10,41 @@ BOARD_SIZE = 8
 BATCH_SIZE = 3
 
 
+def calculate_clutter(board):
+    total = board.size
+    filled = int(np.count_nonzero(board))
+    return filled / total if total else 0.0
+
+
+def calculate_holes(board):
+    rows, cols = board.shape
+    empty = (board == 0)
+    seen = np.zeros_like(empty, dtype=bool)
+    queue = []
+    for c in range(cols):
+        if empty[0, c]:
+            seen[0, c] = True
+            queue.append((0, c))
+        if empty[rows - 1, c]:
+            seen[rows - 1, c] = True
+            queue.append((rows - 1, c))
+    for r in range(rows):
+        if empty[r, 0]:
+            seen[r, 0] = True
+            queue.append((r, 0))
+        if empty[r, cols - 1]:
+            seen[r, cols - 1] = True
+            queue.append((r, cols - 1))
+    while queue:
+        r, c = queue.pop()
+        for dr, dc in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            nr, nc = r + dr, c + dc
+            if 0 <= nr < rows and 0 <= nc < cols and empty[nr, nc] and not seen[nr, nc]:
+                seen[nr, nc] = True
+                queue.append((nr, nc))
+    return int(np.sum(empty & ~seen))
+
+
 def load_unique_blocks(path="unique_blocks.txt"):
     blocks = []
     with open(path, "r") as f:
@@ -120,6 +155,8 @@ class BlockBlastSim:
         self.clear_streak = 0
         self.combo_count = 0
         self.in_combo = False
+        self.lines_cleared_last_move = 0
+        self._recompute_metrics()
         self.batch = []
         self.batch_indices = []
         self.batch_used = [False] * BATCH_SIZE
@@ -134,6 +171,9 @@ class BlockBlastSim:
             "in_combo": self.in_combo,
             "combo_count": self.combo_count,
             "moves_since_last_clear": self.moves_since_last_clear,
+            "lines_cleared_last_move": self.lines_cleared_last_move,
+            "clutter": self.clutter,
+            "holes": self.holes,
         }
 
     def _sample_batch_indices(self):
@@ -176,6 +216,10 @@ class BlockBlastSim:
                 self.batch_used = [False] * BATCH_SIZE
                 return
         raise RuntimeError("Failed to generate a solvable batch.")
+
+    def _recompute_metrics(self):
+        self.clutter = calculate_clutter(self.board)
+        self.holes = calculate_holes(self.board)
 
     def _update_combo(self, lines_cleared):
         if lines_cleared > 0:
@@ -231,9 +275,11 @@ class BlockBlastSim:
             return StepResult(self.board.copy(), self.batch, -5.0, False, {"invalid": "placement"})
 
         self.board, lines_cleared = apply_placement(self.board, block, row, col)
+        self.lines_cleared_last_move = lines_cleared
         self.batch_used[tray_index] = True
 
         self._update_combo(lines_cleared)
+        self._recompute_metrics()
         reward = float(self._score_move(block, lines_cleared))
         self.score += reward
 
