@@ -168,9 +168,7 @@ class BlockBlastEnv:
 
         if invalid_move:
             debug("step: overlaps / out of bounds, invalid move")
-            reward = -20.0
-            done = False
-            return self._encode_state(), reward, done, {}
+            Exception("Invalid move attempted")
         
         debug("step: placing block")
         self.lines_cleared_last_move = play.place_block(self.board, tray_index, col, row, block)
@@ -220,7 +218,7 @@ class BlockBlastEnv:
         if standard_loss:
             debug("step: loss detected with standard check, no valid moves left")
             debug(f"step: score increase before loss: {score_increase}")
-            reward =  - 15.0
+            reward =  - 7.5
             done = True
             debug(f"step: reward={reward} done={done}")
             return pre_state, reward, done, {}
@@ -235,7 +233,7 @@ class BlockBlastEnv:
                     debug("step: video ad detected during placement verification, clicking out of ad")
                     play.click_out_of_ad()
                     debug(f"step: score increase before loss: {score_increase}")
-                    reward =  - 15.0
+                    reward =  - 7.5
                     done = True
                     debug(f"step: reward={reward} done={done}")
                     return pre_state, reward, done, {}
@@ -267,7 +265,7 @@ class BlockBlastEnv:
             debug("step: ad loss detected with valid move mask, no valid moves left")
             play.click_out_of_ad()
             debug(f"step: score increase before loss: {score_increase}")
-            reward =  - 15.0
+            reward =  - 7.5
             done = True
             debug(f"step: reward={reward} done={done}")
             return pre_state, reward, done, {}

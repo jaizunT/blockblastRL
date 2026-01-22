@@ -85,12 +85,26 @@ def train_ppo(
         if resume_path:
             model = MaskablePPO.load(resume_path, env=env)
         else:
-            model = MaskablePPO("MultiInputPolicy", env, verbose=1)
+            model = MaskablePPO(
+                "MultiInputPolicy",
+                env,
+                verbose=1,
+                gamma=0.88,
+                gae_lambda=0.9,
+                n_steps=128,
+            )
     else:
         if resume_path:
             model = PPO.load(resume_path, env=env)
         else:
-            model = PPO("MultiInputPolicy", env, verbose=1)
+            model = PPO(
+                "MultiInputPolicy",
+                env,
+                verbose=1,
+                gamma=0.88,
+                gae_lambda=0.9,
+                n_steps=128,
+            )
     model.learn(
         total_timesteps=total_timesteps,
         callback=checkpoint_callback,
