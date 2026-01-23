@@ -311,7 +311,7 @@ if __name__ == "__main__":
     parser.add_argument("--resume-step", type=int, default=None)
     parser.add_argument("--sim", action="store_true")
     parser.add_argument("--num-envs", type=int, default=4)
-    parser.add_argument("--log-episodes", type=int, default=10)
+    parser.add_argument("--log-episodes", type=int, default=1000)
     parser.add_argument("--debug-masks", action="store_true")
     parser.add_argument("--sim-model-batch", action="store_true")
     args = parser.parse_args()
