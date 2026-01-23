@@ -391,7 +391,7 @@ class BlockBlastSim:
 
         done = not self._has_valid_moves()
         if done:
-            reward = -50.0 if self.steps < 20 else -15.0
+            reward = -20 if self.steps < 20 else -10.0
         info = {
             "lines_cleared": lines_cleared,
             "combo_count": self.combo_count,
