@@ -41,7 +41,7 @@ def _action_mask_fn(env):
 
 
 class EpisodeLogger(BaseCallback):
-    def __init__(self, log_every=10):
+    def __init__(self, log_every=1000):
         super().__init__()
         self.log_every = log_every
         self.episode_count = 0
