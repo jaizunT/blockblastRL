@@ -224,7 +224,7 @@ def train_ppo(
     resume_step=None,
     use_sim=False,
     num_envs=1,
-    log_episodes=10,
+    log_episodes=1000,
     debug_masks=False,
     sim_model_batch=False,
 ):
