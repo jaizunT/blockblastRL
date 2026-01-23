@@ -163,7 +163,7 @@ class BlockBlastSim:
 
     def reset(self, board=None):
         if board is None:
-            sampled_clutter_prob = 0.75
+            sampled_clutter_prob = 0.8
             sampled_min_clutter = float(
                 np.clip(self.rng.normal(loc=0.6, scale=0.1), 0.3, 0.95)
             )
@@ -391,7 +391,9 @@ class BlockBlastSim:
 
         done = not self._has_valid_moves()
         if done:
-            reward = -20 if self.steps < 20 else -10.0
+            # Linear terminal reward centered at 18 steps.
+            # steps=18 -> 0, below 18 negative, above 18 positive; clip to keep scale comparable.
+            reward = float(np.clip((self.steps - 18) * (10.0 / 18.0), -10.0, 10.0))
         info = {
             "lines_cleared": lines_cleared,
             "combo_count": self.combo_count,
