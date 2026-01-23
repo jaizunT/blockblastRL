@@ -71,9 +71,25 @@ PPO Training (SB3)
   python blockblast_ppo.py --sim --masking --resume-step 10000
 - Resume PPO from a checkpoint step (loads `ppo_checkpoints/rl_model_<step>_steps.zip`):
   python blockblast_ppo.py --masking --resume-step 10000
-- Checkpoints are saved to `ppo_checkpoints/`.
-- PPO hyperparameters are shared between live and sim runs (gamma/gae_lambda/n_steps).
-- `--num-envs` controls the number of parallel simulator instances (default 4).
+- Flags:
+  - `--timesteps`: total timesteps across all envs (rounded up to full rollouts)
+  - `--save-freq`: checkpoint frequency (callback calls)
+  - `--save-dir`: checkpoint directory (default `ppo_checkpoints`)
+  - `--model-path`: final model path (default `ppo_blockblast.zip`)
+  - `--masking`: enable action masking (sb3-contrib)
+  - `--resume-step`: load `ppo_checkpoints/rl_model_<step>_steps.zip`
+  - `--sim`: use the simulator instead of live screen capture
+  - `--num-envs`: number of parallel sim envs (default 4)
+  - `--log-episodes`: print episodic stats every N episodes
+- Current PPO defaults (live + sim):
+  - `gamma=0.95`, `gae_lambda=0.95`, `n_steps=128`
+  - `net_arch=[256, 256, 128]` (shared for policy/value)
+- Rollouts: each rollout collects `n_steps` per env, so size is `n_steps * num_envs`.
+- Example: `num_envs=500`, `n_steps=128` ⇒ `64,000` timesteps per rollout. If you set
+  `--timesteps 10_000`, SB3 still runs one full rollout (64k).
+- Checkpoints are saved to `ppo_checkpoints/`; with VecEnv, effective step interval is
+  `save_freq * num_envs` timesteps (one callback call per env step). Final model is
+  saved to `--model-path`.
 
 RL Agent (custom loop)
 - The baseline policy loop is in `blockblast_agent.py`.
@@ -114,7 +130,15 @@ Simulation (blockblast_simulation.py)
 - Batches are sampled from the block generator weights and re-rolled until solvable.
 - Combo logic is line-based: clearing within 3 moves increments a line streak; combo
   starts once the streak reaches 3 lines.
-- Scoring is a placeholder (currently returns 0 per move).
+- Optional cluttered starts:
+  - `generate_clutterered_board(min_clutter=0.4)` builds a random board by growing
+    blocks (size ~ N(3, 2.5)) until a target clutter fraction is reached.
+  - Set `clutter_prob` (and `min_clutter`) in `BlockBlastSim(...)` to start from a
+    cluttered board on reset with probability `p`; otherwise resets to empty.
+- Rewards mirror the live agent heuristic:
+  - `score_increase/1000`, `lines_cleared**1.5`, combo bonuses, step bonus,
+  clutter penalty (thresholded), and delta-holes bonus.
+  - Invalid moves return `-5.0`; terminal loss returns `-7.5`.
 
 Notes
 - The script uses drag-and-drop from the tray pickup point to the target cell center.

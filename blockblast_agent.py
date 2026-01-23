@@ -60,7 +60,7 @@ class BlockBlastEnv:
         }
         with open(path, "a") as f:
             f.write(json.dumps(record) + "\n")
-        self._log_unique_blocks(trays)
+        # self._log_unique_blocks(trays)
 
     def _serialize_block(self, block):
         block_arr = np.array(block, dtype=int)
@@ -89,6 +89,21 @@ class BlockBlastEnv:
             with open(path, "a") as f:
                 for line in new_lines:
                     f.write(line + "\n")
+
+    def _load_unique_blocks(self, path="unique_blocks.txt"):
+        unique_blocks = set()
+        try:
+            with open(path, "r") as f:
+                for line in f:
+                    unique_blocks.add(line.strip())
+        except FileNotFoundError:
+            pass
+        return unique_blocks
+
+    def _block_known(self, block, unique_blocks):
+        if block is None:
+            return False
+        return self._serialize_block(block) in unique_blocks
 
     def _encode_state(self):
         board = np.array(self.board, dtype=np.float32)
@@ -155,12 +170,36 @@ class BlockBlastEnv:
 
         self.log_batch(self.board, self.trays)
 
+        # Refresh until we get a block that exists in unique_blocks.txt.
+        unique_blocks = self._load_unique_blocks()
+        if not self._block_known(block, unique_blocks):
+            debug("step: tray block not in unique_blocks, refreshing")
+            start_time = time.time()
+            while time.time() - start_time < 2.0:
+                time.sleep(0.05)
+                self.refresh_data()
+                block = self.trays[tray_index]
+                if self._block_known(block, unique_blocks):
+                    break
+            if not self._block_known(block, unique_blocks):
+                debug("step: tray block still unknown after refresh, skipping move")
+
+                if play.video_ad_detected(snapshot=status.screenshot()):
+                    debug("step: video ad detected during placement verification, clicking out of ad")
+                    play.click_out_of_ad()
+                    reward =  - 7.5
+                    done = True
+                    debug(f"step: reward={reward} done={done}")
+                    return pre_state, reward, done, {}
+                
+                return pre_state, 0, False, {}
+
         # If block not calibrated, raise exception
         class_name = f"{block.shape[0]}x{block.shape[1]}"
         if not auto.is_class_calibrated(class_name, tray_index):
             debug(f"step: block not recognized for tray {tray_index} class {class_name}")
             status.print_block(block)
-            debug(f"step: restarting game")
+            debug("step: restarting game")
             play.click_settings_replay()
             return self._encode_state(), 0, True, {}
                 
@@ -260,7 +299,10 @@ class BlockBlastEnv:
             
         debug("step: placed correctly")
 
-        ad_loss = get_valid_move_mask(self.board, self.trays, debug_mask=DEBUG).sum() == 0
+        ad_loss = (
+            get_valid_move_mask(self.board, self.trays, debug_mask=DEBUG, force_nonempty=False).sum()
+            == 0
+        )
         if ad_loss:
             debug("step: ad loss detected with valid move mask, no valid moves left")
             play.click_out_of_ad()
@@ -301,7 +343,7 @@ class BlockBlastEnv:
             + (self.combo_count * 0.5) 
             + (0.2 if not prev_combo and self.in_combo else 0.0)
             - (1.0 if prev_combo and self.combo_count == 0 else 0.0) 
-            + 0.1 * (self.steps ** 0.5)
+            + 0.2 * (self.steps ** 0.5)
             - (clutter_score)
             + (delta_holes * 0.2)
         )
@@ -454,7 +496,7 @@ def main():
 
             state = next_state
 
-def get_valid_move_mask(board, trays, debug_mask=False):
+def get_valid_move_mask(board, trays, debug_mask=False, force_nonempty=True):
     board_np = np.array(board)
     mask = torch.zeros((1, 3 * 8 * 8), dtype=torch.bool)
     for tray_index in range(3):
@@ -469,8 +511,8 @@ def get_valid_move_mask(board, trays, debug_mask=False):
                 if not play.invalid_placement(col, row, tray, board_np):
                     action_idx = tray_index * 64 + row * 8 + col
                     mask[0, action_idx] = True
-    if debug_mask and int(mask.sum().item()) == 0:
-        count = int(mask.sum().item())
+    count = int(mask.sum().item())
+    if debug_mask and count == 0:
         debug(f"mask: valid actions={count}")
         if count == 0:
             debug("mask: no valid actions; trays:")
@@ -481,6 +523,8 @@ def get_valid_move_mask(board, trays, debug_mask=False):
                     debug(f"mask: tray {i} shape={tray.shape}")
                     if DEBUG:
                         status.print_block(tray)
+    if count == 0 and force_nonempty:
+        mask[0, 0] = True
     return mask
 
 

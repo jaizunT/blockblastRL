@@ -100,6 +100,15 @@ def batch_has_solution(board, blocks):
     return False
 
 
+def sample_solvable_batch_uniform(board, blocks, rng, max_attempts):
+    for _ in range(max_attempts):
+        indices = rng.integers(0, len(blocks), size=BATCH_SIZE).tolist()
+        batch = [blocks[i] for i in indices]
+        if batch_has_solution(board, batch):
+            return batch, indices
+    return None, None
+
+
 def _solve_batch(board, blocks, idx):
     if idx >= len(blocks):
         return True
@@ -131,26 +140,38 @@ class BlockBlastSim:
         unique_blocks_path="unique_blocks.txt",
         seed=0,
         temperature=1.0,
-        max_batch_attempts=200,
+        max_batch_attempts=400,
         device=None,
+        use_model_batch=False,
     ):
         self.blocks = load_unique_blocks(unique_blocks_path)
         self.num_blocks = len(self.blocks)
         self.temperature = temperature
         self.max_batch_attempts = max_batch_attempts
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
-        self.model = BlockGenerationNet(self.num_blocks).to(self.device)
-        state = torch.load(model_path, map_location=self.device)
-        self.model.load_state_dict(state)
-        self.model.eval()
+        self.use_model_batch = use_model_batch
+        self.model = None
+        if self.use_model_batch:
+            self.model = BlockGenerationNet(self.num_blocks).to(self.device)
+            state = torch.load(model_path, map_location=self.device)
+            self.model.load_state_dict(state)
+            self.model.eval()
         self.rng = np.random.default_rng(seed)
         torch.manual_seed(seed)
 
         self.reset()
 
     def reset(self, board=None):
+        if board is None:
+            sampled_clutter_prob = 0.75
+            sampled_min_clutter = float(
+                np.clip(self.rng.normal(loc=0.6, scale=0.1), 0.3, 0.95)
+            )
+            if self.rng.random() < sampled_clutter_prob:
+                board = self.generate_clutterered_board(min_clutter=sampled_min_clutter)
         self.board = np.zeros((BOARD_SIZE, BOARD_SIZE), dtype=int) if board is None else board.copy()
         self.score = 0
+        self.steps = 0
         self.moves_since_last_clear = 999
         self.clear_streak = 0
         self.combo_count = 0
@@ -176,7 +197,57 @@ class BlockBlastSim:
             "holes": self.holes,
         }
 
+    def generate_clutterered_board(self, min_clutter=0.4):
+        # Generate a random board with at least min_clutter filled using randomly placed 'growing' blocks of size 1 to 6
+        board = np.zeros((BOARD_SIZE, BOARD_SIZE), dtype=int)
+        target_clutter = float(min_clutter)
+        max_block_size = 6
+        max_attempts = 2000
+        attempts = 0
+
+        while calculate_clutter(board) < target_clutter and attempts < max_attempts:
+            attempts += 1
+            empty_cells = np.argwhere(board == 0)
+            if empty_cells.size == 0:
+                break
+
+            start_idx = int(self.rng.integers(0, len(empty_cells)))
+            start = tuple(empty_cells[start_idx])
+            desired_size = int(
+                np.clip(
+                    np.rint(self.rng.normal(loc=3.0, scale=np.sqrt(2.5))),
+                    1,
+                    max_block_size,
+                )
+            )
+
+            cells = {start}
+            growth_attempts = 0
+            max_growth_attempts = desired_size * 10
+            while len(cells) < desired_size and growth_attempts < max_growth_attempts:
+                growth_attempts += 1
+                base = tuple(list(cells)[int(self.rng.integers(0, len(cells)))])
+                r, c = base
+                neighbors = [
+                    (r + dr, c + dc)
+                    for dr, dc in ((1, 0), (-1, 0), (0, 1), (0, -1))
+                    if 0 <= r + dr < BOARD_SIZE
+                    and 0 <= c + dc < BOARD_SIZE
+                    and board[r + dr, c + dc] == 0
+                    and (r + dr, c + dc) not in cells
+                ]
+                if neighbors:
+                    nxt = neighbors[int(self.rng.integers(0, len(neighbors)))]
+                    cells.add(nxt)
+
+            for r, c in cells:
+                board[r, c] = 1
+
+        return board
+
     def _sample_batch_indices(self):
+        if self.model is None:
+            raise RuntimeError("Model batch sampling requested but model is not loaded.")
         board_tensor = torch.tensor(
             self.board, dtype=torch.float32, device=self.device
         ).unsqueeze(0)
@@ -206,16 +277,27 @@ class BlockBlastSim:
                 prev = idx
         return indices
 
+    def _sample_batch_indices_uniform(self):
+        return self.rng.integers(0, self.num_blocks, size=BATCH_SIZE).tolist()
+
     def _generate_solvable_batch(self):
-        for _ in range(self.max_batch_attempts):
-            indices = self._sample_batch_indices()
-            blocks = [self.blocks[i] for i in indices]
-            if batch_has_solution(self.board, blocks):
-                self.batch = blocks
-                self.batch_indices = indices
-                self.batch_used = [False] * BATCH_SIZE
-                return
-        raise RuntimeError("Failed to generate a solvable batch.")
+        if self.use_model_batch and self.rng.random() < 0.5:
+            for _ in range(self.max_batch_attempts):
+                indices = self._sample_batch_indices()
+                blocks = [self.blocks[i] for i in indices]
+                if batch_has_solution(self.board, blocks):
+                    self.batch = blocks
+                    self.batch_indices = indices
+                    self.batch_used = [False] * BATCH_SIZE
+                    return
+        batch, indices = sample_solvable_batch_uniform(
+            self.board, self.blocks, self.rng, self.max_batch_attempts
+        )
+        if batch is None:
+            raise RuntimeError("Failed to generate a solvable batch.")
+        self.batch = batch
+        self.batch_indices = indices
+        self.batch_used = [False] * BATCH_SIZE
 
     def _recompute_metrics(self):
         self.clutter = calculate_clutter(self.board)
@@ -270,6 +352,12 @@ class BlockBlastSim:
         if self.batch_used[tray_index]:
             return StepResult(self.board.copy(), self.batch, -5.0, False, {"invalid": "tray_used"})
 
+        self.steps += 1
+        prev_score = self.score
+        prev_combo = self.in_combo
+        prev_holes = self.holes
+        prev_clutter = self.clutter
+
         block = self.batch[tray_index]
         if not valid_placement(self.board, block, row, col):
             return StepResult(self.board.copy(), self.batch, -5.0, False, {"invalid": "placement"})
@@ -280,13 +368,30 @@ class BlockBlastSim:
 
         self._update_combo(lines_cleared)
         self._recompute_metrics()
-        reward = float(self._score_move(block, lines_cleared))
-        self.score += reward
+        score_increase = float(self._score_move(block, lines_cleared))
+        self.score += score_increase
 
         if all(self.batch_used):
             self._generate_solvable_batch()
 
+        clutter_score = -0.5 if (self.clutter > 0.65 and prev_clutter <= 0.65) else 0.0
+        delta_holes = prev_holes - self.holes
+        survival_bonus = 0.02
+        reward = (
+            score_increase / 1000.0
+            + (self.lines_cleared_last_move**1.5)
+            + (self.combo_count * 0.5)
+            + (0.2 if not prev_combo and self.in_combo else 0.0)
+            - (1.0 if prev_combo and self.combo_count == 0 else 0.0)
+            + 0.2 * (self.steps ** 0.5)
+            - clutter_score
+            + (delta_holes * 0.2)
+            + survival_bonus
+        )
+
         done = not self._has_valid_moves()
+        if done:
+            reward = -50.0 if self.steps < 20 else -15.0
         info = {
             "lines_cleared": lines_cleared,
             "combo_count": self.combo_count,

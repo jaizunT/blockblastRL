@@ -96,17 +96,10 @@ def sample_tray(tray_tl, tray_br, snapshot=None):
     rel_y = top - snapshot["top"]
     tray_img = snapshot["img"][rel_y:rel_y + height, rel_x:rel_x + width]
 
-    # Convert to gray scale for easier processing
-    img_array = (
-        0.299 * tray_img[..., 0]
-        + 0.587 * tray_img[..., 1]
-        + 0.114 * tray_img[..., 2]
-    ).astype(np.uint8)
-
-    # Get max and min for bounding box
-    bg_pixel = img_array[0,0]
-    bg = int(bg_pixel)
-    mask = np.abs(img_array.astype(np.int16) - bg) > 10
+    # Use color difference from background pixel to find foreground.
+    bg_pixel = tray_img[0, 0]
+    diff = np.abs(tray_img.astype(np.int16) - bg_pixel.astype(np.int16)).sum(axis=2)
+    mask = diff > 20
 
     cols_with_fg = np.where(mask.any(axis=0))[0]
     rows_with_fg = np.where(mask.any(axis=1))[0]
@@ -115,10 +108,9 @@ def sample_tray(tray_tl, tray_br, snapshot=None):
 
     x0, x1 = cols_with_fg[0], cols_with_fg[-1]
     y0, y1 = rows_with_fg[0], rows_with_fg[-1] 
-    cropped = img_array[y0:y1+1, x0:x1+1]
-
+    cropped = tray_img[y0:y1+1, x0:x1+1]
     # Classify blocks into rectangular classes
-    h, w = cropped.shape
+    h, w = cropped.shape[:2]
     CELL_LENGTH = 16
 
     block_h = int(np.round(h / CELL_LENGTH))
@@ -129,8 +121,8 @@ def sample_tray(tray_tl, tray_br, snapshot=None):
     # Fill in block shape using pixel at center of each cell using thresholding
     for i in range(block_h):
         for j in range(block_w):
-            sample = int(cropped[i * CELL_LENGTH + CELL_LENGTH // 2, j * CELL_LENGTH + CELL_LENGTH // 2])
-            if abs(sample - bg) > 10:
+            sample = cropped[i * CELL_LENGTH + CELL_LENGTH // 2, j * CELL_LENGTH + CELL_LENGTH // 2]
+            if color_difference(sample, bg_pixel) > 15:
                 block[i][j] = 1
 
     rows_with_cells = np.where(block.any(axis=1))[0]
